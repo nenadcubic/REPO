@@ -1,0 +1,18 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: er_redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "no"]
+
+  dev:
+    build: .
+    image: docker-dev
+    container_name: er_dev
+    depends_on:
+      - redis
+    volumes:
+      - ..:/work
+    tty: true
+
