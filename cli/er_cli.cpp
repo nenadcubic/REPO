@@ -19,12 +19,16 @@ static void usage() {
       "  er_cli find_all <bit1> <bit2> [bit3 ...]\n"
       "  er_cli find_any <bit1> <bit2> [bit3 ...]\n"
       "  er_cli find_not <include_bit> <exclude_bit1> [exclude_bit2 ...]\n"
+      "  er_cli find_universe_not <exclude_bit1> [exclude_bit2 ...]\n"
+      "  er_cli find_all_not <include_bit> <exclude_bit1> [exclude_bit2 ...]\n"
       "\n"
       "Store+TTL:\n"
       "  er_cli find_all_store <ttl_sec> <bit1> <bit2> [bit3 ...]\n"
       "  er_cli find_any_store <ttl_sec> <bit1> <bit2> [bit3 ...]\n"
       "  er_cli find_not_store <ttl_sec> <include_bit> <exclude_bit1> [exclude_bit2 ...]\n"
-      "  er_cli show <redis_set_key>\n";
+      "  er_cli show <redis_set_key>\n"
+        "  er_cli find_universe_not_store <ttl_sec> <exclude_bit1> [exclude_bit2 ...]\n"
+      "  er_cli find_all_not_store <ttl_sec> <include_bit> <exclude_bit1> [exclude_bit2 ...]\n";
 }
 
 static std::string key_for(const std::string& name) {
@@ -153,6 +157,12 @@ int main(int argc, char** argv) {
                 std::cerr << "HSET flags_bin failed\n";
                 return 3;
             }
+            
+            // maintain universe set for NOT queries
+            if (!r.sadd("er:all", name)) {
+                std::cerr << "SADD er:all failed\n";
+                return 3;
+            }
 
             std::cout << "OK: stored " << key << " and updated index\n";
             return 0;
@@ -232,9 +242,72 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        // ---- FIND_UNIVERSE_NOT (no store) ----
+        if (op == "find_universe_not") {
+            if (argc < 3) { usage(); return 1; }
+
+            std::vector<std::string> keys;
+            keys.push_back("er:all");
+            for (int i = 2; i < argc; ++i) {
+                const std::size_t b = static_cast<std::size_t>(std::stoul(argv[i]));
+                if (b >= 4096) { std::cerr << "exclude bit out of range\n"; return 1; }
+                keys.push_back(idx_key_for_bit(b));
+            }
+
+            std::vector<std::string> members;
+            if (!r.sdiff(keys, members)) { std::cerr << "SDIFF failed\n"; return 9; }
+            print_members("Query UNIVERSE NOT (er:all \\ excludes)", members);
+            return 0;
+        }
+
+        // ---- FIND_ALL_NOT (no store) ----
+        if (op == "find_all_not") {
+            if (argc < 4) { usage(); return 1; }
+
+            const std::size_t include_bit = static_cast<std::size_t>(std::stoul(argv[2]));
+            if (include_bit >= 4096) { std::cerr << "include bit out of range\n"; return 1; }
+
+            // tmp = er:all \ excludes
+            std::vector<std::string> diff_keys;
+            diff_keys.push_back("er:all");
+            for (int i = 3; i < argc; ++i) {
+                const std::size_t b = static_cast<std::size_t>(std::stoul(argv[i]));
+                if (b >= 4096) { std::cerr << "exclude bit out of range\n"; return 1; }
+                diff_keys.push_back(idx_key_for_bit(b));
+            }
+
+            std::vector<std::string> universe_minus;
+            if (!r.sdiff(diff_keys, universe_minus)) { std::cerr << "SDIFF failed\n"; return 9; }
+
+            // intersect with include
+            // NOTE: hiredis/Redis nema SINTER između "virtual list" i seta bez store,
+            // pa radimo: members(include_set) ∩ (universe_minus) lokalno.
+            std::vector<std::string> include_members;
+            if (!r.smembers(idx_key_for_bit(include_bit), include_members)) { std::cerr << "SMEMBERS failed\n"; return 6; }
+
+            std::unordered_set<std::string> allow(universe_minus.begin(), universe_minus.end());
+            std::vector<std::string> out;
+            out.reserve(include_members.size());
+            for (auto& m : include_members) {
+                if (allow.find(m) != allow.end()) out.push_back(m);
+            }
+
+            print_members("Query ALL NOT (include ∩ (er:all \\ excludes))", out);
+            return 0;
+        }
+
         // ---- STORE variants ----
-        if (op == "find_all_store" || op == "find_any_store" || op == "find_not_store") {
-            if (argc < 5) { usage(); return 1; }
+        if (op == "find_all_store" || op == "find_any_store" || op == "find_not_store"
+         || op == "find_universe_not_store" || op == "find_all_not_store") {
+            // Minimalni broj argumenata zavisi od komande:
+            // - find_universe_not_store: ttl + 1 exclude => argc >= 4
+            // - sve ostale store komande: trebaju bar 2 bita (ili include+exclude) => argc >= 5
+            const bool is_universe_not_store = (op == "find_universe_not_store");
+            if ((is_universe_not_store && argc < 4) || (!is_universe_not_store && argc < 5)) {
+                usage();
+                return 1;
+            }
+
 
             const int ttl = std::stoi(argv[2]);
             if (ttl <= 0) { std::cerr << "ttl_sec must be > 0\n"; return 1; }
@@ -253,6 +326,46 @@ int main(int argc, char** argv) {
                 if (idx_keys.size() < 2) { usage(); return 1; }
                 tmp_key = make_tmp_key("or", ttl, idx_keys);
                 ok_store = r.sunionstore(tmp_key, idx_keys) && r.expire_seconds(tmp_key, ttl);
+            } else if (op == "find_universe_not_store") {
+                // args: ttl exclude1 exclude2 ...
+                std::vector<std::string> set_keys;
+                set_keys.reserve(static_cast<std::size_t>(argc - 3));
+                for (int i = 3; i < argc; ++i) {
+                    const std::size_t b = static_cast<std::size_t>(std::stoul(argv[i]));
+                    if (b >= 4096) { std::cerr << "exclude bit out of range\n"; return 1; }
+                    set_keys.push_back(idx_key_for_bit(b));
+                }
+                tmp_key = make_tmp_key("unot", ttl, set_keys);
+                // universe \ excludes
+                ok_store = r.store_not_expire_lua(ttl, "er:all", set_keys, tmp_key);
+
+            } else if (op == "find_all_not_store") {
+                // args: ttl include exclude1 exclude2 ...
+                const std::size_t include_bit = static_cast<std::size_t>(std::stoul(argv[3]));
+                if (include_bit >= 4096) { std::cerr << "include bit out of range\n"; return 1; }
+
+                std::vector<std::string> excludes;
+                excludes.reserve(static_cast<std::size_t>(argc - 4));
+                for (int i = 4; i < argc; ++i) {
+                    const std::size_t b = static_cast<std::size_t>(std::stoul(argv[i]));
+                    if (b >= 4096) { std::cerr << "exclude bit out of range\n"; return 1; }
+                    excludes.push_back(idx_key_for_bit(b));
+                }
+
+                // Step1: tmp_not = universe \ excludes
+                const std::string tmp_not = make_tmp_key("unot_tmp", ttl, excludes);
+                if (!r.store_not_expire_lua(ttl, "er:all", excludes, tmp_not)) {
+                    std::cerr << "STORE universe-not failed\n";
+                    return 11;
+                }
+
+                // Step2: out = include ∩ tmp_not
+                std::vector<std::string> keys;
+                keys.push_back(idx_key_for_bit(include_bit));
+                keys.push_back(tmp_not);
+
+                tmp_key = make_tmp_key("andnot", ttl, keys);
+                ok_store = r.store_all_expire_lua(ttl, keys, tmp_key);
             } else { // find_not_store
                 // args: ttl include exclude1 ...
                 const std::size_t include_bit = static_cast<std::size_t>(std::stoul(argv[3]));

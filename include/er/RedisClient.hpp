@@ -53,10 +53,24 @@ public:
     bool sdiffstore (const std::string& dst, const std::vector<std::string>& keys);
     
     bool store_expire_lua(const std::string& op,
-                      const std::string& dst,
-                      int ttl_seconds,
-                      const std::vector<std::string>& keys,
-                      long long* out_cardinality = nullptr);
+                          const std::string& dst,
+                          int ttl_seconds,
+                          const std::vector<std::string>& keys,
+                          long long* out_cardinality = nullptr);
+    static std::string make_tmp_key(const std::string& tag);
+
+    bool store_all_expire_lua(int ttl_seconds,
+                              const std::vector<std::string>& set_keys,
+                              const std::string& out_key);
+
+    bool store_any_expire_lua(int ttl_seconds,
+                              const std::vector<std::string>& set_keys,
+                              const std::string& out_key);
+
+    bool store_not_expire_lua(int ttl_seconds,
+                              const std::string& universe_key,
+                              const std::vector<std::string>& set_keys,
+                              const std::string& out_key);
 
 private:
     struct CtxDeleter {

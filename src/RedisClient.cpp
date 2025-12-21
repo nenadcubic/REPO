@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <cstdarg>
 #include <vector>
+#include <chrono>
+#include <sstream>
 
 namespace er {
 
@@ -338,6 +340,148 @@ bool RedisClient::store_expire_lua(const std::string& op,
     }
 
     freeReplyObject(r);
+    return ok;
+}
+
+std::string er::RedisClient::make_tmp_key(const std::string& tag) {
+    using namespace std::chrono;
+    auto ns = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+    std::ostringstream oss;
+    oss << "er:tmp:" << tag << ":" << ns;
+    return oss.str();
+}
+
+static bool eval_ok(redisReply* r) {
+    if (!r) return false;
+    // EVAL returns integer (count), or array, etc. We accept INTEGER >=0
+    if (r->type == REDIS_REPLY_INTEGER) return true;
+    // Some redis versions return status "OK" for some ops
+    if (r->type == REDIS_REPLY_STATUS) return true;
+    return true;
+}
+
+bool er::RedisClient::store_all_expire_lua(int ttl_seconds,
+                                          const std::vector<std::string>& set_keys,
+                                          const std::string& out_key) {
+    if (!ctx_ || set_keys.empty()) return false;
+
+    // KEYS: set_keys...
+    // ARGV: ttl, out_key
+    const char* script = R"lua(
+local ttl = tonumber(ARGV[1])
+local out = ARGV[2]
+redis.call('SINTERSTORE', out, unpack(KEYS))
+if ttl and ttl > 0 then
+  redis.call('EXPIRE', out, ttl)
+end
+return redis.call('SCARD', out)
+)lua";
+
+    std::vector<const char*> argv;
+    std::vector<std::string> args;
+    args.reserve(2);
+    args.push_back(std::to_string(ttl_seconds));
+    args.push_back(out_key);
+
+    // Build redisCommand: EVAL script numkeys key1 key2 ... argv1 argv2
+    // We'll use redisCommandArgv for safety
+    std::vector<std::string> cmd;
+    cmd.reserve(3 + set_keys.size() + args.size());
+    cmd.push_back("EVAL");
+    cmd.push_back(script);
+    cmd.push_back(std::to_string((int)set_keys.size()));
+    for (auto& k : set_keys) cmd.push_back(k);
+    for (auto& a : args) cmd.push_back(a);
+
+    std::vector<const char*> cstr;
+    std::vector<size_t> lens;
+    cstr.reserve(cmd.size());
+    lens.reserve(cmd.size());
+    for (auto& s : cmd) { cstr.push_back(s.c_str()); lens.push_back(s.size()); }
+
+    redisReply* r = (redisReply*)redisCommandArgv(ctx_.get(), (int)cstr.size(), cstr.data(), lens.data());
+    bool ok = eval_ok(r);
+    if (r) freeReplyObject(r);
+    return ok;
+}
+
+bool er::RedisClient::store_any_expire_lua(int ttl_seconds,
+                                          const std::vector<std::string>& set_keys,
+                                          const std::string& out_key) {
+    if (!ctx_ || set_keys.empty()) return false;
+
+    const char* script = R"lua(
+local ttl = tonumber(ARGV[1])
+local out = ARGV[2]
+redis.call('SUNIONSTORE', out, unpack(KEYS))
+if ttl and ttl > 0 then
+  redis.call('EXPIRE', out, ttl)
+end
+return redis.call('SCARD', out)
+)lua";
+
+    std::vector<std::string> cmd;
+    cmd.reserve(3 + set_keys.size() + 2);
+    cmd.push_back("EVAL");
+    cmd.push_back(script);
+    cmd.push_back(std::to_string((int)set_keys.size()));
+    for (auto& k : set_keys) cmd.push_back(k);
+    cmd.push_back(std::to_string(ttl_seconds));
+    cmd.push_back(out_key);
+
+    std::vector<const char*> cstr;
+    std::vector<size_t> lens;
+    cstr.reserve(cmd.size());
+    lens.reserve(cmd.size());
+    for (auto& s : cmd) { cstr.push_back(s.c_str()); lens.push_back(s.size()); }
+
+    redisReply* r = (redisReply*)redisCommandArgv(ctx_.get(), (int)cstr.size(), cstr.data(), lens.data());
+    bool ok = eval_ok(r);
+    if (r) freeReplyObject(r);
+    return ok;
+}
+
+bool er::RedisClient::store_not_expire_lua(int ttl_seconds,
+                                          const std::string& universe_key,
+                                          const std::vector<std::string>& set_keys,
+                                          const std::string& out_key) {
+    if (!ctx_) return false;
+
+    // KEYS: universe_key + set_keys...
+    const char* script = R"lua(
+local ttl = tonumber(ARGV[1])
+local out = ARGV[2]
+-- SDIFFSTORE out universe s1 s2 ...
+redis.call('SDIFFSTORE', out, unpack(KEYS))
+if ttl and ttl > 0 then
+  redis.call('EXPIRE', out, ttl)
+end
+return redis.call('SCARD', out)
+)lua";
+
+    std::vector<std::string> keys;
+    keys.reserve(1 + set_keys.size());
+    keys.push_back(universe_key);
+    for (auto& k : set_keys) keys.push_back(k);
+
+    std::vector<std::string> cmd;
+    cmd.reserve(3 + keys.size() + 2);
+    cmd.push_back("EVAL");
+    cmd.push_back(script);
+    cmd.push_back(std::to_string((int)keys.size()));
+    for (auto& k : keys) cmd.push_back(k);
+    cmd.push_back(std::to_string(ttl_seconds));
+    cmd.push_back(out_key);
+
+    std::vector<const char*> cstr;
+    std::vector<size_t> lens;
+    cstr.reserve(cmd.size());
+    lens.reserve(cmd.size());
+    for (auto& s : cmd) { cstr.push_back(s.c_str()); lens.push_back(s.size()); }
+
+    redisReply* r = (redisReply*)redisCommandArgv(ctx_.get(), (int)cstr.size(), cstr.data(), lens.data());
+    bool ok = eval_ok(r);
+    if (r) freeReplyObject(r);
     return ok;
 }
 
