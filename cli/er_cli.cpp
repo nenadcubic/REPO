@@ -13,8 +13,17 @@
 static void usage() {
     std::cout <<
       "Usage:\n"
+      "  er_cli [--keys-only] <command> ...\n"
+      "\n"
+      "Options:\n"
+      "  --keys-only          For *_store commands, print only the tmp key\n"
+      "  (or set ER_KEYS_ONLY=1)\n"
+      "  (Redis: ER_REDIS_HOST, ER_REDIS_PORT)\n"
+      "\n"
+      "Commands:\n"
       "  er_cli put <name> <bit> [bit2 bit3 ...]\n"
       "  er_cli get <name>\n"
+      "  er_cli del <name> [--force]\n"
       "  er_cli find <bit>\n"
       "  er_cli find_all <bit1> <bit2> [bit3 ...]\n"
       "  er_cli find_any <bit1> <bit2> [bit3 ...]\n"
@@ -27,7 +36,7 @@ static void usage() {
       "  er_cli find_any_store <ttl_sec> <bit1> <bit2> [bit3 ...]\n"
       "  er_cli find_not_store <ttl_sec> <include_bit> <exclude_bit1> [exclude_bit2 ...]\n"
       "  er_cli show <redis_set_key>\n"
-        "  er_cli find_universe_not_store <ttl_sec> <exclude_bit1> [exclude_bit2 ...]\n"
+      "  er_cli find_universe_not_store <ttl_sec> <exclude_bit1> [exclude_bit2 ...]\n"
       "  er_cli find_all_not_store <ttl_sec> <include_bit> <exclude_bit1> [exclude_bit2 ...]\n";
 }
 
@@ -92,23 +101,9 @@ static std::vector<std::string> build_idx_keys_from_bits(int argc, char** argv, 
     return idx_keys;
 }
 
-static std::string make_tmp_key(const std::string& op, int ttl, const std::vector<std::string>& idx_keys) {
-    // deterministički ključ (isti upit => isti tmp key), u praksi dovoljno:
-    // er:tmp:<op>:ttl<ttl>:k<hash>
-    std::uint64_t h = 1469598103934665603ull; // FNV-1a
-    auto mix = [&](const std::string& s) {
-        for (unsigned char c : s) {
-            h ^= c;
-            h *= 1099511628211ull;
-        }
-    };
-    mix(op);
-    mix(std::to_string(ttl));
-    for (const auto& k : idx_keys) mix(k);
-
-    std::ostringstream oss;
-    oss << "er:tmp:" << op << ":ttl" << ttl << ":h" << std::hex << h;
-    return oss.str();
+static std::string make_tmp_key(const std::string& tag, int ttl) {
+    // unique tmp key per call (no collisions between concurrent runs)
+    return er::RedisClient::make_tmp_key(tag + ":ttl" + std::to_string(ttl));
 }
 
 static void print_members(const std::string& label, const std::vector<std::string>& members) {
@@ -117,13 +112,47 @@ static void print_members(const std::string& label, const std::vector<std::strin
     for (const auto& m : members) std::cout << " - " << m << "\n";
 }
 
+static std::string env_string(const char* name, const std::string& def) {
+    const char* v = std::getenv(name);
+    if (!v || !*v) return def;
+    return std::string(v);
+}
+
+static int env_int(const char* name, int def) {
+    const char* v = std::getenv(name);
+    if (!v || !*v) return def;
+    return std::stoi(v);
+}
+
+static bool env_truthy(const char* name) {
+    const char* v = std::getenv(name);
+    if (!v || !*v) return false;
+    const std::string s(v);
+    return s == "1" || s == "true" || s == "TRUE" || s == "yes" || s == "YES";
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) { usage(); return 1; }
 
-    const std::string op = argv[1];
+    bool keys_only = env_truthy("ER_KEYS_ONLY");
+    int shift = 0;
+    if (argc >= 3) {
+        const std::string maybe_opt = argv[1];
+        if (maybe_opt == "--keys-only" || maybe_opt == "--key-only") {
+            keys_only = true;
+            shift = 1;
+        }
+    }
+
+    const int cargc = argc - shift;
+    char** cargv = argv + shift;
+    if (cargc < 2) { usage(); return 1; }
+    const std::string op = cargv[1];
 
     try {
-        er::RedisClient r("redis", 6379);
+        const std::string host = env_string("ER_REDIS_HOST", "redis");
+        const int port = env_int("ER_REDIS_PORT", 6379);
+        er::RedisClient r(host, port);
         if (!r.ping()) {
             std::cerr << "Redis PING failed\n";
             return 2;
@@ -131,17 +160,18 @@ int main(int argc, char** argv) {
 
         // ---- PUT ----
         if (op == "put") {
-            if (argc < 4) { usage(); return 1; }
+            if (cargc < 4) { usage(); return 1; }
 
-            const std::string name = argv[2];
+            const std::string name = cargv[2];
             const std::string key  = key_for(name);
 
             er::Flags4096 oldf;
             load_existing_flags(r, key, oldf);
 
             er::Element e(name);
-            for (int i = 3; i < argc; ++i) {
-                const std::size_t bit = static_cast<std::size_t>(std::stoul(argv[i]));
+            for (int i = 3; i < cargc; ++i) {
+                const std::size_t bit = static_cast<std::size_t>(std::stoul(cargv[i]));
+                if (bit >= 4096) throw std::runtime_error("bit out of range (0..4095): " + std::to_string(bit));
                 e.flags().set(bit);
             }
 
@@ -170,9 +200,9 @@ int main(int argc, char** argv) {
 
         // ---- GET ----
         if (op == "get") {
-            if (argc < 3) { usage(); return 1; }
+            if (cargc < 3) { usage(); return 1; }
 
-            const std::string name = argv[2];
+            const std::string name = cargv[2];
             const std::string key  = key_for(name);
 
             er::Flags4096 f;
@@ -187,10 +217,41 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        // ---- DEL ----
+        if (op == "del") {
+            if (cargc < 3) { usage(); return 1; }
+            const std::string name = cargv[2];
+            const std::string key  = key_for(name);
+
+            const bool force = (cargc >= 4 && std::string(cargv[3]) == "--force");
+
+            er::Flags4096 f;
+            const bool have_flags = load_existing_flags(r, key, f);
+
+            if (have_flags) {
+                for (auto b : f.set_bits()) {
+                    r.srem(idx_key_for_bit(b), name);
+                }
+            } else if (force) {
+                for (std::size_t b = 0; b < 4096; ++b) {
+                    r.srem(idx_key_for_bit(b), name);
+                }
+            }
+
+            r.srem("er:all", name);
+            r.del_key(key);
+
+            if (!have_flags && !force) {
+                std::cerr << "WARN: element missing; pass --force to scrub all 4096 indexes\n";
+            }
+            std::cout << "OK: deleted " << name << "\n";
+            return 0;
+        }
+
         // ---- FIND single ----
         if (op == "find") {
-            if (argc < 3) { usage(); return 1; }
-            const std::size_t bit = static_cast<std::size_t>(std::stoul(argv[2]));
+            if (cargc < 3) { usage(); return 1; }
+            const std::size_t bit = static_cast<std::size_t>(std::stoul(cargv[2]));
             if (bit >= 4096) { std::cerr << "bit out of range (0..4095)\n"; return 1; }
 
             std::vector<std::string> members;
@@ -202,8 +263,8 @@ int main(int argc, char** argv) {
 
         // ---- FIND_ALL (no store) ----
         if (op == "find_all") {
-            if (argc < 4) { usage(); return 1; }
-            auto idx_keys = build_idx_keys_from_bits(argc, argv, 2);
+            if (cargc < 4) { usage(); return 1; }
+            auto idx_keys = build_idx_keys_from_bits(cargc, cargv, 2);
 
             std::vector<std::string> members;
             if (!r.sinter(idx_keys, members)) { std::cerr << "SINTER failed\n"; return 7; }
@@ -213,8 +274,8 @@ int main(int argc, char** argv) {
 
         // ---- FIND_ANY (no store) ----
         if (op == "find_any") {
-            if (argc < 4) { usage(); return 1; }
-            auto idx_keys = build_idx_keys_from_bits(argc, argv, 2);
+            if (cargc < 4) { usage(); return 1; }
+            auto idx_keys = build_idx_keys_from_bits(cargc, cargv, 2);
 
             std::vector<std::string> members;
             if (!r.sunion(idx_keys, members)) { std::cerr << "SUNION failed\n"; return 8; }
@@ -224,14 +285,14 @@ int main(int argc, char** argv) {
 
         // ---- FIND_NOT (no store) ----
         if (op == "find_not") {
-            if (argc < 4) { usage(); return 1; }
-            const std::size_t include_bit = static_cast<std::size_t>(std::stoul(argv[2]));
+            if (cargc < 4) { usage(); return 1; }
+            const std::size_t include_bit = static_cast<std::size_t>(std::stoul(cargv[2]));
             if (include_bit >= 4096) { std::cerr << "include bit out of range\n"; return 1; }
 
             std::vector<std::string> idx_keys;
             idx_keys.push_back(idx_key_for_bit(include_bit));
-            for (int i = 3; i < argc; ++i) {
-                const std::size_t b = static_cast<std::size_t>(std::stoul(argv[i]));
+            for (int i = 3; i < cargc; ++i) {
+                const std::size_t b = static_cast<std::size_t>(std::stoul(cargv[i]));
                 if (b >= 4096) { std::cerr << "exclude bit out of range\n"; return 1; }
                 idx_keys.push_back(idx_key_for_bit(b));
             }
@@ -244,12 +305,12 @@ int main(int argc, char** argv) {
 
         // ---- FIND_UNIVERSE_NOT (no store) ----
         if (op == "find_universe_not") {
-            if (argc < 3) { usage(); return 1; }
+            if (cargc < 3) { usage(); return 1; }
 
             std::vector<std::string> keys;
             keys.push_back("er:all");
-            for (int i = 2; i < argc; ++i) {
-                const std::size_t b = static_cast<std::size_t>(std::stoul(argv[i]));
+            for (int i = 2; i < cargc; ++i) {
+                const std::size_t b = static_cast<std::size_t>(std::stoul(cargv[i]));
                 if (b >= 4096) { std::cerr << "exclude bit out of range\n"; return 1; }
                 keys.push_back(idx_key_for_bit(b));
             }
@@ -262,16 +323,16 @@ int main(int argc, char** argv) {
 
         // ---- FIND_ALL_NOT (no store) ----
         if (op == "find_all_not") {
-            if (argc < 4) { usage(); return 1; }
+            if (cargc < 4) { usage(); return 1; }
 
-            const std::size_t include_bit = static_cast<std::size_t>(std::stoul(argv[2]));
+            const std::size_t include_bit = static_cast<std::size_t>(std::stoul(cargv[2]));
             if (include_bit >= 4096) { std::cerr << "include bit out of range\n"; return 1; }
 
             // tmp = er:all \ excludes
             std::vector<std::string> diff_keys;
             diff_keys.push_back("er:all");
-            for (int i = 3; i < argc; ++i) {
-                const std::size_t b = static_cast<std::size_t>(std::stoul(argv[i]));
+            for (int i = 3; i < cargc; ++i) {
+                const std::size_t b = static_cast<std::size_t>(std::stoul(cargv[i]));
                 if (b >= 4096) { std::cerr << "exclude bit out of range\n"; return 1; }
                 diff_keys.push_back(idx_key_for_bit(b));
             }
@@ -303,13 +364,13 @@ int main(int argc, char** argv) {
             // - find_universe_not_store: ttl + 1 exclude => argc >= 4
             // - sve ostale store komande: trebaju bar 2 bita (ili include+exclude) => argc >= 5
             const bool is_universe_not_store = (op == "find_universe_not_store");
-            if ((is_universe_not_store && argc < 4) || (!is_universe_not_store && argc < 5)) {
+            if ((is_universe_not_store && cargc < 4) || (!is_universe_not_store && cargc < 5)) {
                 usage();
                 return 1;
             }
 
 
-            const int ttl = std::stoi(argv[2]);
+            const int ttl = std::stoi(cargv[2]);
             if (ttl <= 0) { std::cerr << "ttl_sec must be > 0\n"; return 1; }
 
             std::string tmp_key;
@@ -317,75 +378,74 @@ int main(int argc, char** argv) {
 
             if (op == "find_all_store") {
                 // args: ttl bit1 bit2 ...
-                auto idx_keys = build_idx_keys_from_bits(argc, argv, 3);
+                auto idx_keys = build_idx_keys_from_bits(cargc, cargv, 3);
                 if (idx_keys.size() < 2) { usage(); return 1; }
-                tmp_key = make_tmp_key("and", ttl, idx_keys);
-                ok_store = r.sinterstore(tmp_key, idx_keys) && r.expire_seconds(tmp_key, ttl);
+                tmp_key = make_tmp_key("and", ttl);
+                ok_store = r.store_all_expire_lua(ttl, idx_keys, tmp_key);
             } else if (op == "find_any_store") {
-                auto idx_keys = build_idx_keys_from_bits(argc, argv, 3);
+                auto idx_keys = build_idx_keys_from_bits(cargc, cargv, 3);
                 if (idx_keys.size() < 2) { usage(); return 1; }
-                tmp_key = make_tmp_key("or", ttl, idx_keys);
-                ok_store = r.sunionstore(tmp_key, idx_keys) && r.expire_seconds(tmp_key, ttl);
+                tmp_key = make_tmp_key("or", ttl);
+                ok_store = r.store_any_expire_lua(ttl, idx_keys, tmp_key);
             } else if (op == "find_universe_not_store") {
                 // args: ttl exclude1 exclude2 ...
                 std::vector<std::string> set_keys;
-                set_keys.reserve(static_cast<std::size_t>(argc - 3));
-                for (int i = 3; i < argc; ++i) {
-                    const std::size_t b = static_cast<std::size_t>(std::stoul(argv[i]));
+                set_keys.reserve(static_cast<std::size_t>(cargc - 3));
+                for (int i = 3; i < cargc; ++i) {
+                    const std::size_t b = static_cast<std::size_t>(std::stoul(cargv[i]));
                     if (b >= 4096) { std::cerr << "exclude bit out of range\n"; return 1; }
                     set_keys.push_back(idx_key_for_bit(b));
                 }
-                tmp_key = make_tmp_key("unot", ttl, set_keys);
+                tmp_key = make_tmp_key("unot", ttl);
                 // universe \ excludes
                 ok_store = r.store_not_expire_lua(ttl, "er:all", set_keys, tmp_key);
 
             } else if (op == "find_all_not_store") {
                 // args: ttl include exclude1 exclude2 ...
-                const std::size_t include_bit = static_cast<std::size_t>(std::stoul(argv[3]));
+                const std::size_t include_bit = static_cast<std::size_t>(std::stoul(cargv[3]));
                 if (include_bit >= 4096) { std::cerr << "include bit out of range\n"; return 1; }
 
                 std::vector<std::string> excludes;
-                excludes.reserve(static_cast<std::size_t>(argc - 4));
-                for (int i = 4; i < argc; ++i) {
-                    const std::size_t b = static_cast<std::size_t>(std::stoul(argv[i]));
+                excludes.reserve(static_cast<std::size_t>(cargc - 4));
+                for (int i = 4; i < cargc; ++i) {
+                    const std::size_t b = static_cast<std::size_t>(std::stoul(cargv[i]));
                     if (b >= 4096) { std::cerr << "exclude bit out of range\n"; return 1; }
                     excludes.push_back(idx_key_for_bit(b));
                 }
 
-                // Step1: tmp_not = universe \ excludes
-                const std::string tmp_not = make_tmp_key("unot_tmp", ttl, excludes);
-                if (!r.store_not_expire_lua(ttl, "er:all", excludes, tmp_not)) {
-                    std::cerr << "STORE universe-not failed\n";
-                    return 11;
-                }
-
-                // Step2: out = include ∩ tmp_not
-                std::vector<std::string> keys;
-                keys.push_back(idx_key_for_bit(include_bit));
-                keys.push_back(tmp_not);
-
-                tmp_key = make_tmp_key("andnot", ttl, keys);
-                ok_store = r.store_all_expire_lua(ttl, keys, tmp_key);
+                tmp_key = make_tmp_key("andnot", ttl);
+                ok_store = r.store_all_not_expire_lua(
+                    ttl,
+                    idx_key_for_bit(include_bit),
+                    "er:all",
+                    excludes,
+                    tmp_key
+                );
             } else { // find_not_store
                 // args: ttl include exclude1 ...
-                const std::size_t include_bit = static_cast<std::size_t>(std::stoul(argv[3]));
+                const std::size_t include_bit = static_cast<std::size_t>(std::stoul(cargv[3]));
                 if (include_bit >= 4096) { std::cerr << "include bit out of range\n"; return 1; }
 
-                std::vector<std::string> idx_keys;
-                idx_keys.push_back(idx_key_for_bit(include_bit));
-                for (int i = 4; i < argc; ++i) {
-                    const std::size_t b = static_cast<std::size_t>(std::stoul(argv[i]));
+                std::vector<std::string> excludes;
+                excludes.reserve(static_cast<std::size_t>(cargc - 4));
+                for (int i = 4; i < cargc; ++i) {
+                    const std::size_t b = static_cast<std::size_t>(std::stoul(cargv[i]));
                     if (b >= 4096) { std::cerr << "exclude bit out of range\n"; return 1; }
-                    idx_keys.push_back(idx_key_for_bit(b));
+                    excludes.push_back(idx_key_for_bit(b));
                 }
-                if (idx_keys.size() < 2) { usage(); return 1; }
-                tmp_key = make_tmp_key("not", ttl, idx_keys);
-                ok_store = r.sdiffstore(tmp_key, idx_keys) && r.expire_seconds(tmp_key, ttl);
+                if (excludes.empty()) { usage(); return 1; }
+                tmp_key = make_tmp_key("not", ttl);
+                ok_store = r.store_not_expire_lua(ttl, idx_key_for_bit(include_bit), excludes, tmp_key);
             }
 
             if (!ok_store) {
                 std::cerr << "STORE+EXPIRE failed\n";
                 return 11;
+            }
+
+            if (keys_only) {
+                std::cout << tmp_key << "\n";
+                return 0;
             }
 
             // pokaži ključ + rezultate (možeš kasnije prebaciti da samo printa ključ)
@@ -402,8 +462,8 @@ int main(int argc, char** argv) {
 
         // ---- SHOW tmp set ----
         if (op == "show") {
-            if (argc < 3) { usage(); return 1; }
-            const std::string k = argv[2];
+            if (cargc < 3) { usage(); return 1; }
+            const std::string k = cargv[2];
             std::vector<std::string> members;
             if (!r.smembers(k, members)) { std::cerr << "SMEMBERS failed\n"; return 13; }
             print_members("SHOW: " + k, members);
@@ -418,4 +478,3 @@ int main(int argc, char** argv) {
         return 10;
     }
 }
-

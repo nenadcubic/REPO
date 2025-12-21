@@ -485,6 +485,67 @@ return redis.call('SCARD', out)
     return ok;
 }
 
+bool er::RedisClient::store_all_not_expire_lua(int ttl_seconds,
+                                              const std::string& include_key,
+                                              const std::string& universe_key,
+                                              const std::vector<std::string>& exclude_keys,
+                                              const std::string& out_key) {
+    if (!ctx_) return false;
+
+    // KEYS: universe_key, exclude1, exclude2, ..., include_key
+    // ARGV: ttl, out_key
+    const char* script = R"lua(
+local ttl = tonumber(ARGV[1])
+local out = ARGV[2]
+local tmp = out .. ':tmp'
+
+-- tmp = universe \ excludes
+redis.call('SDIFFSTORE', tmp, unpack(KEYS, 1, (#KEYS - 1)))
+-- out = include ∩ tmp
+redis.call('SINTERSTORE', out, KEYS[#KEYS], tmp)
+
+if ttl and ttl > 0 then
+  redis.call('EXPIRE', out, ttl)
+end
+redis.call('DEL', tmp)
+return redis.call('SCARD', out)
+)lua";
+
+    std::vector<std::string> keys;
+    keys.reserve(2 + exclude_keys.size());
+    keys.push_back(universe_key);
+    for (const auto& k : exclude_keys) keys.push_back(k);
+    keys.push_back(include_key);
+
+    std::vector<std::string> cmd;
+    cmd.reserve(3 + keys.size() + 2);
+    cmd.push_back("EVAL");
+    cmd.push_back(script);
+    cmd.push_back(std::to_string((int)keys.size()));
+    for (const auto& k : keys) cmd.push_back(k);
+    cmd.push_back(std::to_string(ttl_seconds));
+    cmd.push_back(out_key);
+
+    std::vector<const char*> cstr;
+    std::vector<size_t> lens;
+    cstr.reserve(cmd.size());
+    lens.reserve(cmd.size());
+    for (auto& s : cmd) { cstr.push_back(s.c_str()); lens.push_back(s.size()); }
+
+    redisReply* r = (redisReply*)redisCommandArgv(ctx_.get(), (int)cstr.size(), cstr.data(), lens.data());
+    bool ok = eval_ok(r);
+    if (r) freeReplyObject(r);
+    return ok;
+}
+
+bool er::RedisClient::del_key(const std::string& key) {
+    auto* r = cmd(ctx_.get(), "DEL %s", key.c_str());
+    if (!r) return false;
+    throw_if_error(r, "DEL");
+    bool ok = (r->type == REDIS_REPLY_INTEGER);
+    freeReplyObject(r);
+    return ok;
+}
+
 
 } // namespace er
-

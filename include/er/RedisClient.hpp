@@ -72,6 +72,14 @@ public:
                               const std::vector<std::string>& set_keys,
                               const std::string& out_key);
 
+    bool store_all_not_expire_lua(int ttl_seconds,
+                                  const std::string& include_key,
+                                  const std::string& universe_key,
+                                  const std::vector<std::string>& exclude_keys,
+                                  const std::string& out_key);
+
+    bool del_key(const std::string& key);
+
 private:
     struct CtxDeleter {
         void operator()(redisContext* c) const noexcept {
@@ -83,4 +91,3 @@ private:
 };
 
 } // namespace er
-
