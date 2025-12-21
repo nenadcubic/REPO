@@ -4,7 +4,20 @@ services:
     container_name: er_redis
     ports:
       - "6379:6379"
-    command: ["redis-server", "--appendonly", "no"]
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--appendfsync"
+      - "everysec"
+      - "--auto-aof-rewrite-percentage"
+      - "100"
+      - "--auto-aof-rewrite-min-size"
+      - "64mb"
+      - "--aof-use-rdb-preamble"
+      - "yes"
+    volumes:
+      - er_redis_data:/data
 
   dev:
     build: .
@@ -15,4 +28,9 @@ services:
     volumes:
       - ..:/work
     tty: true
+
+volumes:
+  er_redis_data:
+
+
 

@@ -17,7 +17,7 @@ public:
 
     bool ping();
 
-    // HASH (string)
+    // HASH
     bool hset(const std::string& key,
               const std::string& field,
               const std::string& value);
@@ -26,7 +26,6 @@ public:
               const std::string& field,
               std::string& out_value);
 
-    // HASH (binary-safe)
     bool hset_bin(const std::string& key,
                   const std::string& field,
                   const void* data,
@@ -36,14 +35,28 @@ public:
                   const std::string& field,
                   std::string& out_blob);
 
-    // SET index ops
+    // SET basic
     bool sadd(const std::string& key, const std::string& member);
     bool srem(const std::string& key, const std::string& member);
     bool smembers(const std::string& key, std::vector<std::string>& out_members);
+
+    // SET composite (no-store)
     bool sinter(const std::vector<std::string>& keys, std::vector<std::string>& out_members);
     bool sunion(const std::vector<std::string>& keys, std::vector<std::string>& out_members);
-    bool sdiff(const std::vector<std::string>& keys, std::vector<std::string>& out_members);
+    bool sdiff (const std::vector<std::string>& keys, std::vector<std::string>& out_members);
 
+    // STORE + EXPIRE
+    bool expire_seconds(const std::string& key, int ttl_seconds);
+
+    bool sinterstore(const std::string& dst, const std::vector<std::string>& keys);
+    bool sunionstore(const std::string& dst, const std::vector<std::string>& keys);
+    bool sdiffstore (const std::string& dst, const std::vector<std::string>& keys);
+    
+    bool store_expire_lua(const std::string& op,
+                      const std::string& dst,
+                      int ttl_seconds,
+                      const std::vector<std::string>& keys,
+                      long long* out_cardinality = nullptr);
 
 private:
     struct CtxDeleter {
