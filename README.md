@@ -27,6 +27,9 @@ Examples (inside `dev`):
 - `./build/cli/er_cli show <tmp_key>`
 - `./build/cli/er_cli del alice`
 
+**Smoke test**
+- `./scripts/smoke_test.sh` (deletes only `er:*` keys by default; configurable via `ER_PREFIX`, `ER_REDIS_HOST`, `ER_REDIS_PORT`, `ER_CLI`)
+
 Next:
 - Implementation checklist: `docs/TODO.md`
 
@@ -39,3 +42,4 @@ Next:
 
 Notes:
 - If you previously built inside the Docker `dev` container, your existing `build/` cache may point to `/work`; use a fresh directory like `build_local/`.
+- Docker dev uses `ER_REDIS_HOST=redis` via `docker/docker-compose.yml`; host default is `localhost`.
