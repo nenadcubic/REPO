@@ -160,7 +160,7 @@ struct Invocation {
 static Invocation parse_invocation(int argc, char** argv) {
     Invocation inv;
     inv.keys_only = env_truthy("ER_KEYS_ONLY");
-    inv.host = env_string("ER_REDIS_HOST", "redis");
+    inv.host = env_string("ER_REDIS_HOST", "localhost");
     inv.port = env_int("ER_REDIS_PORT", 6379);
 
     int i = 1;

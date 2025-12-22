@@ -238,7 +238,7 @@ static Result<long long> store_op(redisContext* c,
     if (keys.empty()) return Result<long long>::err(Errc::kInvalidArg, "store op requires at least one key");
     std::vector<std::string> args;
     args.reserve(keys.size() + 2);
-    args.push_back(op);
+    args.push_back(std::string(op));
     args.push_back(std::string(dst));
     for (const auto& k : keys) args.push_back(k);
 
@@ -292,7 +292,7 @@ Result<long long> RedisClient::store_expire_lua(std::string_view op,
     args.push_back(std::to_string(keys.size()));
     for (const auto& k : keys) args.push_back(k);
 
-    args.push_back(op);
+    args.push_back(std::string(op));
     args.push_back(std::string(dst));
     args.push_back(std::to_string(ttl_seconds));
 
@@ -432,14 +432,23 @@ Result<long long> er::RedisClient::store_all_not_expire_lua(int ttl_seconds,
     // KEYS: universe_key, exclude1, exclude2, ..., include_key
     // ARGV: ttl, out_key
     const char* script = R"lua(
-local ttl = tonumber(ARGV[1])
-local out = ARGV[2]
-local tmp = out .. ':tmp'
+	local ttl = tonumber(ARGV[1])
+	local out = ARGV[2]
+	-- Avoid tmp-key collisions across concurrent calls for the same out key.
+	-- Use server TIME + a monotonic counter key.
+	local t = redis.call('TIME')
+	local nonce = redis.call('INCR', 'er:tmp:nonce')
+	if redis.call('TTL', 'er:tmp:nonce') < 0 then
+	  redis.call('EXPIRE', 'er:tmp:nonce', 86400)
+	end
+	local tmp = out .. ':tmp:' .. t[1] .. ':' .. t[2] .. ':' .. nonce
+	local tmp_ttl = (ttl and ttl > 0) and ttl or 60
 
--- tmp = universe \ excludes
-redis.call('SDIFFSTORE', tmp, unpack(KEYS, 1, (#KEYS - 1)))
--- out = include ∩ tmp
-redis.call('SINTERSTORE', out, KEYS[#KEYS], tmp)
+	-- tmp = universe \ excludes
+	redis.call('SDIFFSTORE', tmp, unpack(KEYS, 1, (#KEYS - 1)))
+	redis.call('EXPIRE', tmp, tmp_ttl)
+	-- out = include ∩ tmp
+	redis.call('SINTERSTORE', out, KEYS[#KEYS], tmp)
 
 if ttl and ttl > 0 then
   redis.call('EXPIRE', out, ttl)

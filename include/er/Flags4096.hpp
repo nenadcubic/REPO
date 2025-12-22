@@ -1,6 +1,7 @@
 #pragma once
 
 #include <boost/multiprecision/cpp_int.hpp>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -45,4 +46,3 @@ private:
 };
 
 } // namespace er
-

@@ -37,10 +37,14 @@ The system must support:
 - No permissions / auth layer yet.
 
 ## Naming & Structure
-- C++17
+- C++20 (see `CMakeLists.txt`)
 - CLI-oriented entry points
 - Lua scripts embedded or versioned explicitly
 - Avoid magic constants; document any unavoidable ones.
+
+## Defaults
+- Redis host default is `localhost` for host runs.
+- Docker dev sets `ER_REDIS_HOST=redis` (see `docker/docker-compose.yml`).
 
 ## Known Risks
 - Large bitmap sets causing unexpected Redis memory growth.

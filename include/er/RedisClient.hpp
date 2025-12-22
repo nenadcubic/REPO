@@ -21,7 +21,7 @@ public:
     RedisClient(const RedisClient&) = delete;
     RedisClient& operator=(const RedisClient&) = delete;
 
-    static Result<RedisClient> connect(std::string host = "redis", int port = 6379, int timeout_ms = 2000) noexcept;
+    static Result<RedisClient> connect(std::string host = "localhost", int port = 6379, int timeout_ms = 2000) noexcept;
 
     [[nodiscard]] Result<Unit> ping() noexcept;
 

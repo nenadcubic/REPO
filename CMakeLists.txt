@@ -12,8 +12,23 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # ---------- Dependencies ----------
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(HIREDIS REQUIRED hiredis)
+find_package(PkgConfig)
+if(PkgConfig_FOUND)
+  pkg_check_modules(HIREDIS hiredis)
+endif()
+
+if(NOT HIREDIS_FOUND)
+  find_path(HIREDIS_INCLUDE_DIRS hiredis/hiredis.h)
+  find_library(HIREDIS_LIBRARIES hiredis)
+  if(NOT HIREDIS_INCLUDE_DIRS OR NOT HIREDIS_LIBRARIES)
+    message(FATAL_ERROR
+      "hiredis not found.\n"
+      "Install deps (Ubuntu/Debian): sudo apt-get install -y pkg-config libhiredis-dev\n"
+      "Or build inside docker/dev: docker compose -f docker/docker-compose.yml up -d --build\n"
+    )
+  endif()
+  set(HIREDIS_FOUND TRUE)
+endif()
 
 # ---------- Include paths ----------
 include_directories(${CMAKE_SOURCE_DIR}/include)
@@ -37,7 +52,9 @@ target_include_directories(er_core PUBLIC
   ${HIREDIS_INCLUDE_DIRS}
 )
 
-target_compile_options(er_core PRIVATE ${HIREDIS_CFLAGS_OTHER})
+if(HIREDIS_CFLAGS_OTHER)
+  target_compile_options(er_core PRIVATE ${HIREDIS_CFLAGS_OTHER})
+endif()
 target_link_libraries(er_core PUBLIC ${HIREDIS_LIBRARIES})
 
 # ---------- CLI ----------
@@ -75,4 +92,3 @@ target_link_libraries(er_abi PRIVATE er_core)
 # set_target_properties(er_abi PROPERTIES
 #   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 # )
-
