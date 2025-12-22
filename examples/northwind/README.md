@@ -42,6 +42,7 @@ Optional env vars:
 - `NW_TTL_SEC` (default `600`, for `nw:tmp:*`)
 - `NW_PRODUCT_ID` (default `11`, for the “orders containing product” example)
 - `NW_CLEAN_TMP=1` (optional, delete `nw:tmp:*` before compare)
+- `NW_YEAR` (default `1997`, for “orders in year/quarter” examples)
 
 ## Atomicity note
 
@@ -59,6 +60,8 @@ Base (no TTL):
 - `nw:orders:customer:<CustomerID>` (SET of `OrderID`)
 - `nw:order_items:order:<OrderID>` (SET of `ProductID`)
 - `nw:orders:has_product:<ProductID>` (SET of `OrderID`)
+- `nw:idx:orders:year:<YYYY>` (SET of `OrderID`)
+- `nw:idx:orders:quarter:<Q1|Q2|Q3|Q4>` (SET of `OrderID`)
 - `nw:idx:customers:bit:<bit>` (SET of `CustomerID`) for bits defined in `schema_bits.json`
 
 Derived (created by `02_query_compare.sh`, with TTL, default 600s):
@@ -111,6 +114,14 @@ In Redis, each bit is represented as a `SET`:
 - Redis:
   - use `nw:orders:has_product:11` (built during ingest)
   - `SINTERSTORE tmp germanOrders nw:orders:has_product:11` (+ TTL)
+
+6) Orders in year 1997 / quarter Q1 / Q1 AND Germany
+
+- SQL: `OrderDate` range predicates (ISO string compare) or `substr(OrderDate,1,4)='1997'`
+- Redis:
+  - base indexes: `nw:idx:orders:year:1997`, `nw:idx:orders:quarter:Q1`
+  - `SINTERSTORE tmp yearSet quarterSet` (+ TTL)
+  - `SINTERSTORE tmp tmp_german_orders yearSet quarterSet` (+ TTL)
 
 ## Notes
 

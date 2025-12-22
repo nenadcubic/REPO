@@ -10,6 +10,7 @@ NW_REDIS_PORT="${NW_REDIS_PORT:-6379}"
 TTL_SEC="${NW_TTL_SEC:-600}"
 PRODUCT_ID="${NW_PRODUCT_ID:-11}"
 NW_CLEAN_TMP="${NW_CLEAN_TMP:-0}"
+YEAR="${NW_YEAR:-1997}"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing required command: $1" >&2; exit 2; }; }
 need sqlite3
@@ -281,10 +282,42 @@ compare_sql_vs_set \
   "SELECT DISTINCT o.OrderID FROM $O_T o JOIN $C_T c ON c.CustomerID=o.CustomerID JOIN $OD_T od ON od.OrderID=o.OrderID WHERE c.Country='Germany' AND od.ProductID=$PRODUCT_ID ORDER BY o.OrderID;" \
   "$TMP_O_DE_AND_P"
 
+# 6) Orders in year $YEAR
+K_O_YEAR="$PREFIX:idx:orders:year:$YEAR"
+compare_sql_vs_set \
+  "Orders in year $YEAR" \
+  "SELECT OrderID FROM $O_T WHERE OrderDate IS NOT NULL AND substr(OrderDate,1,4)='${YEAR}' ORDER BY OrderID;" \
+  "$K_O_YEAR"
+
+# 7) Orders in $YEAR Q1
+K_O_Q1="$PREFIX:idx:orders:quarter:Q1"
+TMP_O_YEAR_Q1="$(tmp_key orders_${YEAR}_q1)"
+set_store_with_ttl SINTERSTORE "$TMP_O_YEAR_Q1" "$TTL_SEC" "$K_O_YEAR" "$K_O_Q1"
+compare_sql_vs_set \
+  "Orders in ${YEAR} Q1" \
+  "SELECT OrderID FROM $O_T WHERE OrderDate IS NOT NULL AND OrderDate >= '${YEAR}-01-01' AND OrderDate < '${YEAR}-04-01' ORDER BY OrderID;" \
+  "$TMP_O_YEAR_Q1"
+
+# 8) Orders in $YEAR Q1 from German customers
+TMP_O_DE_YEAR_Q1="$(tmp_key orders_de_${YEAR}_q1)"
+set_store_with_ttl SINTERSTORE "$TMP_O_DE_YEAR_Q1" "$TTL_SEC" "$TMP_O_DE" "$K_O_YEAR" "$K_O_Q1"
+compare_sql_vs_set \
+  "Orders in ${YEAR} Q1 from German customers" \
+  "SELECT o.OrderID FROM $O_T o JOIN $C_T c ON c.CustomerID=o.CustomerID WHERE c.Country='Germany' AND o.OrderDate IS NOT NULL AND o.OrderDate >= '${YEAR}-01-01' AND o.OrderDate < '${YEAR}-04-01' ORDER BY o.OrderID;" \
+  "$TMP_O_DE_YEAR_Q1"
+
+# 9) Orders NOT in year $YEAR (set-diff semantics include NULL OrderDate)
+TMP_O_NOT_YEAR="$(tmp_key orders_not_${YEAR})"
+set_store_with_ttl SDIFFSTORE "$TMP_O_NOT_YEAR" "$TTL_SEC" "$K_ORDERS_ALL" "$K_O_YEAR"
+compare_sql_vs_set \
+  "Orders NOT in year $YEAR" \
+  "SELECT OrderID FROM $O_T WHERE OrderDate IS NULL OR substr(OrderDate,1,4)!='${YEAR}' ORDER BY OrderID;" \
+  "$TMP_O_NOT_YEAR"
+
 ER_CLI="$DIR/../../build/cli/er_cli"
 if [[ -x "$ER_CLI" ]]; then
   echo "er_cli (optional): show one derived key"
-  ER_REDIS_HOST="$NW_REDIS_HOST" ER_REDIS_PORT="$NW_REDIS_PORT" "$ER_CLI" show "$TMP_O_DE_AND_P" | head -n 40
+  ER_REDIS_HOST="$NW_REDIS_HOST" ER_REDIS_PORT="$NW_REDIS_PORT" "$ER_CLI" show "$TMP_O_DE_YEAR_Q1" | head -n 40
   echo
 fi
 

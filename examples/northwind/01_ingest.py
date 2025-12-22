@@ -116,8 +116,11 @@ def main() -> int:
         rows = conn.execute(f'SELECT CustomerID, Country FROM "{customers_table}"').fetchall()
         customers: List[Tuple[str, str]] = [(str(rw["CustomerID"]), str(rw["Country"] or "")) for rw in rows]
 
-        order_rows = conn.execute(f'SELECT OrderID, CustomerID FROM "{orders_table}"').fetchall()
-        orders: List[Tuple[str, str]] = [(str(rw["OrderID"]), str(rw["CustomerID"])) for rw in order_rows]
+        order_rows = conn.execute(f'SELECT OrderID, CustomerID, OrderDate FROM "{orders_table}"').fetchall()
+        orders: List[Tuple[str, str, Optional[str]]] = [
+            (str(rw["OrderID"]), str(rw["CustomerID"]), (str(rw["OrderDate"]) if rw["OrderDate"] is not None else None))
+            for rw in order_rows
+        ]
 
         od_rows = conn.execute(f'SELECT OrderID, ProductID FROM "{order_details_table}"').fetchall()
         order_details: List[Tuple[str, str]] = [(str(rw["OrderID"]), str(rw["ProductID"])) for rw in od_rows]
@@ -166,11 +169,28 @@ def main() -> int:
             raise SystemExit(f"Invalid bit for customers.country.{country}: {bit} (expected 0..4095)")
         pipe.sadd(f"{prefix}:idx:customers:bit:{int(bit)}", cid)
 
-    order_ids = [oid for oid, _ in orders]
+    order_ids = [oid for oid, _, _ in orders]
     for ch in chunked(order_ids, 1000):
         pipe.sadd(k_orders_all, *ch)
-    for oid, cid in orders:
+    for oid, cid, order_date in orders:
         pipe.sadd(f"{prefix}:orders:customer:{cid}", oid)
+        if not order_date:
+            continue
+        # Northwind variants commonly use `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`; use the first 10 chars.
+        s = order_date[:10]
+        parts = s.split("-")
+        if len(parts) != 3:
+            continue
+        try:
+            year = int(parts[0])
+            month = int(parts[1])
+        except ValueError:
+            continue
+        if month < 1 or month > 12:
+            continue
+        quarter = (month - 1) // 3 + 1
+        pipe.sadd(f"{prefix}:idx:orders:year:{year}", oid)
+        pipe.sadd(f"{prefix}:idx:orders:quarter:Q{quarter}", oid)
 
     for oid, pid in order_details:
         pipe.sadd(f"{prefix}:order_items:order:{oid}", pid)
