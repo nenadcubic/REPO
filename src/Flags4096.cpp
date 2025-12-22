@@ -1,6 +1,5 @@
 #include "er/Flags4096.hpp"
 
-#include <stdexcept>
 #include <sstream>
 #include <cctype>
 
@@ -8,27 +7,29 @@ namespace er {
 
 Flags4096::Flags4096() : value_(0) {}
 
-static void check_bit(std::size_t bit) {
-    if (bit >= 4096)
-        throw std::out_of_range("Flags4096: bit index out of range");
+static Result<Unit> check_bit(std::size_t bit) noexcept {
+    if (bit >= 4096) return Result<Unit>::err(Errc::kInvalidArg, "Flags4096: bit out of range (0..4095)");
+    return Result<Unit>::ok();
 }
 
-void Flags4096::set(std::size_t bit) {
-    check_bit(bit);
+Result<Unit> Flags4096::set(std::size_t bit) noexcept {
+    if (auto ok = check_bit(bit); !ok) return ok;
     value_ |= (uint4096(1) << bit);
+    return Result<Unit>::ok();
 }
 
-void Flags4096::reset(std::size_t bit) {
-    check_bit(bit);
+Result<Unit> Flags4096::reset(std::size_t bit) noexcept {
+    if (auto ok = check_bit(bit); !ok) return ok;
     value_ &= ~(uint4096(1) << bit);
+    return Result<Unit>::ok();
 }
 
-bool Flags4096::test(std::size_t bit) const {
-    check_bit(bit);
-    return (value_ & (uint4096(1) << bit)) != 0;
+Result<bool> Flags4096::test(std::size_t bit) const noexcept {
+    if (auto ok = check_bit(bit); !ok) return Result<bool>::err(ok.error().code, ok.error().msg);
+    return Result<bool>::ok((value_ & (uint4096(1) << bit)) != 0);
 }
 
-void Flags4096::clear() {
+void Flags4096::clear() noexcept {
     value_ = 0;
 }
 
@@ -65,8 +66,8 @@ static int hex_val(char c) {
     return -1;
 }
 
-Flags4096 Flags4096::from_hex(const std::string& hex) {
-    Flags4096 out;
+Result<Flags4096> Flags4096::from_hex(std::string_view hex) noexcept {
+    Flags4096 out{};
     out.value_ = 0;
 
     std::size_t i = 0;
@@ -78,12 +79,11 @@ Flags4096 Flags4096::from_hex(const std::string& hex) {
     for (; i < hex.size(); ++i) {
         if (std::isspace(static_cast<unsigned char>(hex[i]))) continue;
         int v = hex_val(hex[i]);
-        if (v < 0)
-            throw std::invalid_argument("Flags4096::from_hex: invalid hex");
+        if (v < 0) return Result<Flags4096>::err(Errc::kInvalidArg, "Flags4096::from_hex: invalid hex");
         out.value_ <<= 4;
         out.value_ += uint4096(v);
     }
-    return out;
+    return Result<Flags4096>::ok(std::move(out));
 }
 
 // ---- binary 512B BE ----
@@ -100,33 +100,36 @@ std::array<std::uint8_t, 512> Flags4096::to_bytes_be() const {
     return out;
 }
 
-Flags4096 Flags4096::from_bytes_be(const std::uint8_t* data, std::size_t len) {
-    if (!data)
-        throw std::invalid_argument("from_bytes_be: null data");
-    if (len != 512)
-        throw std::invalid_argument("from_bytes_be: len must be 512");
+Result<Flags4096> Flags4096::from_bytes_be(const std::uint8_t* data, std::size_t len) noexcept {
+    if (!data) return Result<Flags4096>::err(Errc::kInvalidArg, "Flags4096::from_bytes_be: null data");
+    if (len != 512) return Result<Flags4096>::err(Errc::kInvalidArg, "Flags4096::from_bytes_be: len must be 512");
 
-    Flags4096 out;
+    Flags4096 out{};
     out.value_ = 0;
     for (std::size_t i = 0; i < 512; ++i) {
         out.value_ <<= 8;
         out.value_ += uint4096(data[i]);
     }
-    return out;
+    return Result<Flags4096>::ok(std::move(out));
 }
 
 // ---- index helper ----
 
 std::vector<std::size_t> Flags4096::set_bits() const {
     std::vector<std::size_t> bits;
-    bits.reserve(64); // tipično mali broj
+    bits.reserve(64);
 
-    // jednostavno i sigurno: 4096 provjera
-    for (std::size_t b = 0; b < 4096; ++b) {
-        if (test(b)) bits.push_back(b);
+    // Faster than 4096 big-int tests: scan bytes and extract bit positions.
+    const auto bytes = to_bytes_be(); // 512 bytes, BE; out[511] is least-significant byte.
+    for (int i = 511; i >= 0; --i) {
+        const std::uint8_t byte = bytes[static_cast<std::size_t>(i)];
+        if (byte == 0) continue;
+        const std::size_t base = static_cast<std::size_t>((511 - i) * 8);
+        for (std::size_t b = 0; b < 8; ++b) {
+            if (byte & (static_cast<std::uint8_t>(1u) << b)) bits.push_back(base + b);
+        }
     }
     return bits;
 }
 
 } // namespace er
-

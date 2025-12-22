@@ -10,6 +10,7 @@
 #include "er/Element.hpp"
 #include "er/RedisClient.hpp"
 #include "er/Flags4096.hpp"
+#include "er/keys.hpp"
 
 static void usage() {
     std::cout <<
@@ -42,27 +43,33 @@ static void usage() {
 }
 
 static std::string key_for(const std::string& name) {
-    return "er:element:" + name;
+    return er::keys::element(name);
 }
 
 static std::string idx_key_for_bit(std::size_t bit) {
-    return "er:idx:bit:" + std::to_string(bit);
+    return er::keys::idx_bit(bit);
 }
 
 static bool load_existing_flags(er::RedisClient& r, const std::string& key, er::Flags4096& out_flags) {
-    std::string blob;
-    if (r.hget_bin(key, "flags_bin", blob) && blob.size() == 512) {
-        out_flags = er::Flags4096::from_bytes_be(
-            reinterpret_cast<const std::uint8_t*>(blob.data()),
-            blob.size()
+    auto blob = r.hget_bin(key, "flags_bin");
+    if (blob && blob.value().size() == 512) {
+        auto f = er::Flags4096::from_bytes_be(
+            reinterpret_cast<const std::uint8_t*>(blob.value().data()),
+            blob.value().size()
         );
-        return true;
+        if (f) {
+            out_flags = std::move(f).value();
+            return true;
+        }
     }
 
-    std::string hex;
-    if (r.hget(key, "flags_hex", hex) && !hex.empty()) {
-        out_flags = er::Flags4096::from_hex(hex);
-        return true;
+    auto hex = r.hget(key, "flags_hex");
+    if (hex && !hex.value().empty()) {
+        auto f = er::Flags4096::from_hex(hex.value());
+        if (f) {
+            out_flags = std::move(f).value();
+            return true;
+        }
     }
 
     out_flags.clear();
@@ -81,12 +88,12 @@ static void update_index_for_put(er::RedisClient& r,
 
     for (auto b : old_set) {
         if (new_set.find(b) == new_set.end()) {
-            r.srem(idx_key_for_bit(b), name);
+            (void)r.srem(idx_key_for_bit(b), name);
         }
     }
     for (auto b : new_set) {
         if (old_set.find(b) == old_set.end()) {
-            r.sadd(idx_key_for_bit(b), name);
+            (void)r.sadd(idx_key_for_bit(b), name);
         }
     }
 }
@@ -114,7 +121,7 @@ static std::vector<std::string> build_idx_keys_from_bits(int argc, char** argv, 
 
 static std::string make_tmp_key(const std::string& tag, int ttl) {
     // unique tmp key per call (no collisions between concurrent runs)
-    return er::RedisClient::make_tmp_key(tag + ":ttl" + std::to_string(ttl));
+    return er::keys::tmp(tag + ":ttl" + std::to_string(ttl));
 }
 
 static void print_members(const std::string& label, const std::vector<std::string>& members) {
@@ -198,9 +205,14 @@ int main(int argc, char** argv) {
         const int cmd_argc = argc - inv.cmd_index;
         char** cmd_argv = argv + inv.cmd_index;
 
-        er::RedisClient r(inv.host, inv.port);
-        if (!r.ping()) {
-            std::cerr << "Redis PING failed\n";
+        auto rc = er::RedisClient::connect(inv.host, inv.port);
+        if (!rc) {
+            std::cerr << "Redis connect failed: " << rc.error().msg << "\n";
+            return 2;
+        }
+        er::RedisClient r = std::move(rc).value();
+        if (auto ok = r.ping(); !ok) {
+            std::cerr << "Redis PING failed: " << ok.error().msg << "\n";
             return 2;
         }
 
@@ -214,27 +226,36 @@ int main(int argc, char** argv) {
             er::Flags4096 oldf;
             load_existing_flags(r, key, oldf);
 
-            er::Element e(name);
+            auto e_res = er::Element::create(name);
+            if (!e_res) {
+                std::cerr << "ERROR: " << e_res.error().msg << "\n";
+                return 1;
+            }
+            er::Element e = std::move(e_res).value();
             for (int i = 2; i < cmd_argc; ++i) {
-                e.flags().set(parse_bit_arg(cmd_argv[i]));
+                auto ok = e.flags().set(parse_bit_arg(cmd_argv[i]));
+                if (!ok) {
+                    std::cerr << "ERROR: " << ok.error().msg << "\n";
+                    return 1;
+                }
             }
 
             update_index_for_put(r, name, oldf, e.flags());
 
-            if (!r.hset(key, "name", e.name())) {
-                std::cerr << "HSET name failed\n";
+            if (auto ok = r.hset(key, "name", std::string(e.name())); !ok) {
+                std::cerr << "HSET name failed: " << ok.error().msg << "\n";
                 return 3;
             }
 
             const auto bytes = e.flags().to_bytes_be();
-            if (!r.hset_bin(key, "flags_bin", bytes.data(), bytes.size())) {
-                std::cerr << "HSET flags_bin failed\n";
+            if (auto ok = r.hset_bin(key, "flags_bin", bytes.data(), bytes.size()); !ok) {
+                std::cerr << "HSET flags_bin failed: " << ok.error().msg << "\n";
                 return 3;
             }
             
             // maintain universe set for NOT queries
-            if (!r.sadd("er:all", name)) {
-                std::cerr << "SADD er:all failed\n";
+            if (auto ok = r.sadd(er::keys::universe(), name); !ok) {
+                std::cerr << "SADD er:all failed: " << ok.error().msg << "\n";
                 return 3;
             }
 
@@ -256,8 +277,14 @@ int main(int argc, char** argv) {
             }
 
             std::cout << "Key: " << key << "\n";
-            std::cout << "bit42: " << f.test(42) << "\n";
-            std::cout << "bit4095: " << f.test(4095) << "\n";
+            auto t42 = f.test(42);
+            auto t4095 = f.test(4095);
+            if (!t42 || !t4095) {
+                std::cerr << "ERROR: invalid bit test\n";
+                return 4;
+            }
+            std::cout << "bit42: " << t42.value() << "\n";
+            std::cout << "bit4095: " << t4095.value() << "\n";
             return 0;
         }
 
@@ -274,16 +301,16 @@ int main(int argc, char** argv) {
 
             if (have_flags) {
                 for (auto b : f.set_bits()) {
-                    r.srem(idx_key_for_bit(b), name);
+                    (void)r.srem(idx_key_for_bit(b), name);
                 }
             } else if (force) {
                 for (std::size_t b = 0; b < 4096; ++b) {
-                    r.srem(idx_key_for_bit(b), name);
+                    (void)r.srem(idx_key_for_bit(b), name);
                 }
             }
 
-            r.srem("er:all", name);
-            r.del_key(key);
+            (void)r.srem(er::keys::universe(), name);
+            (void)r.del_key(key);
 
             if (!have_flags && !force) {
                 std::cerr << "WARN: element missing; pass --force to scrub all 4096 indexes\n";
@@ -297,10 +324,10 @@ int main(int argc, char** argv) {
             if (cmd_argc < 2) { usage(); return 1; }
             const std::size_t bit = parse_bit_arg(cmd_argv[1]);
 
-            std::vector<std::string> members;
             const std::string idx = idx_key_for_bit(bit);
-            if (!r.smembers(idx, members)) { std::cerr << "SMEMBERS failed\n"; return 6; }
-            print_members("Index: " + idx, members);
+            auto members = r.smembers(idx);
+            if (!members) { std::cerr << "SMEMBERS failed: " << members.error().msg << "\n"; return 6; }
+            print_members("Index: " + idx, members.value());
             return 0;
         }
 
@@ -309,9 +336,9 @@ int main(int argc, char** argv) {
             if (cmd_argc < 3) { usage(); return 1; }
             auto idx_keys = build_idx_keys_from_bits(cmd_argc, cmd_argv, 1);
 
-            std::vector<std::string> members;
-            if (!r.sinter(idx_keys, members)) { std::cerr << "SINTER failed\n"; return 7; }
-            print_members("Query AND (SINTER)", members);
+            auto members = r.sinter(idx_keys);
+            if (!members) { std::cerr << "SINTER failed: " << members.error().msg << "\n"; return 7; }
+            print_members("Query AND (SINTER)", members.value());
             return 0;
         }
 
@@ -320,9 +347,9 @@ int main(int argc, char** argv) {
             if (cmd_argc < 3) { usage(); return 1; }
             auto idx_keys = build_idx_keys_from_bits(cmd_argc, cmd_argv, 1);
 
-            std::vector<std::string> members;
-            if (!r.sunion(idx_keys, members)) { std::cerr << "SUNION failed\n"; return 8; }
-            print_members("Query OR (SUNION)", members);
+            auto members = r.sunion(idx_keys);
+            if (!members) { std::cerr << "SUNION failed: " << members.error().msg << "\n"; return 8; }
+            print_members("Query OR (SUNION)", members.value());
             return 0;
         }
 
@@ -337,9 +364,9 @@ int main(int argc, char** argv) {
                 idx_keys.push_back(idx_key_for_bit(parse_bit_arg(cmd_argv[i])));
             }
 
-            std::vector<std::string> members;
-            if (!r.sdiff(idx_keys, members)) { std::cerr << "SDIFF failed\n"; return 9; }
-            print_members("Query NOT (SDIFF)", members);
+            auto members = r.sdiff(idx_keys);
+            if (!members) { std::cerr << "SDIFF failed: " << members.error().msg << "\n"; return 9; }
+            print_members("Query NOT (SDIFF)", members.value());
             return 0;
         }
 
@@ -348,14 +375,14 @@ int main(int argc, char** argv) {
             if (cmd_argc < 2) { usage(); return 1; }
 
             std::vector<std::string> keys;
-            keys.push_back("er:all");
+            keys.push_back(er::keys::universe());
             for (int i = 1; i < cmd_argc; ++i) {
                 keys.push_back(idx_key_for_bit(parse_bit_arg(cmd_argv[i])));
             }
 
-            std::vector<std::string> members;
-            if (!r.sdiff(keys, members)) { std::cerr << "SDIFF failed\n"; return 9; }
-            print_members("Query UNIVERSE NOT (er:all \\ excludes)", members);
+            auto members = r.sdiff(keys);
+            if (!members) { std::cerr << "SDIFF failed: " << members.error().msg << "\n"; return 9; }
+            print_members("Query UNIVERSE NOT (er:all \\ excludes)", members.value());
             return 0;
         }
 
@@ -367,24 +394,24 @@ int main(int argc, char** argv) {
 
             // tmp = er:all \ excludes
             std::vector<std::string> diff_keys;
-            diff_keys.push_back("er:all");
+            diff_keys.push_back(er::keys::universe());
             for (int i = 2; i < cmd_argc; ++i) {
                 diff_keys.push_back(idx_key_for_bit(parse_bit_arg(cmd_argv[i])));
             }
 
-            std::vector<std::string> universe_minus;
-            if (!r.sdiff(diff_keys, universe_minus)) { std::cerr << "SDIFF failed\n"; return 9; }
+            auto universe_minus = r.sdiff(diff_keys);
+            if (!universe_minus) { std::cerr << "SDIFF failed: " << universe_minus.error().msg << "\n"; return 9; }
 
             // intersect with include
             // NOTE: hiredis/Redis nema SINTER između "virtual list" i seta bez store,
             // pa radimo: members(include_set) ∩ (universe_minus) lokalno.
-            std::vector<std::string> include_members;
-            if (!r.smembers(idx_key_for_bit(include_bit), include_members)) { std::cerr << "SMEMBERS failed\n"; return 6; }
+            auto include_members = r.smembers(idx_key_for_bit(include_bit));
+            if (!include_members) { std::cerr << "SMEMBERS failed: " << include_members.error().msg << "\n"; return 6; }
 
-            std::unordered_set<std::string> allow(universe_minus.begin(), universe_minus.end());
+            std::unordered_set<std::string> allow(universe_minus.value().begin(), universe_minus.value().end());
             std::vector<std::string> out;
-            out.reserve(include_members.size());
-            for (auto& m : include_members) {
+            out.reserve(include_members.value().size());
+            for (auto& m : include_members.value()) {
                 if (allow.find(m) != allow.end()) out.push_back(m);
             }
 
@@ -408,19 +435,20 @@ int main(int argc, char** argv) {
             const int ttl = parse_ttl_arg(cmd_argv[1]);
 
             std::string tmp_key;
-            bool ok_store = false;
 
             if (op == "find_all_store") {
                 // args: ttl bit1 bit2 ...
                 auto idx_keys = build_idx_keys_from_bits(cmd_argc, cmd_argv, 2);
                 if (idx_keys.size() < 2) { usage(); return 1; }
                 tmp_key = make_tmp_key("and", ttl);
-                ok_store = r.store_all_expire_lua(ttl, idx_keys, tmp_key);
+                auto ok_store = r.store_all_expire_lua(ttl, idx_keys, tmp_key);
+                if (!ok_store) { std::cerr << "STORE+EXPIRE failed: " << ok_store.error().msg << "\n"; return 11; }
             } else if (op == "find_any_store") {
                 auto idx_keys = build_idx_keys_from_bits(cmd_argc, cmd_argv, 2);
                 if (idx_keys.size() < 2) { usage(); return 1; }
                 tmp_key = make_tmp_key("or", ttl);
-                ok_store = r.store_any_expire_lua(ttl, idx_keys, tmp_key);
+                auto ok_store = r.store_any_expire_lua(ttl, idx_keys, tmp_key);
+                if (!ok_store) { std::cerr << "STORE+EXPIRE failed: " << ok_store.error().msg << "\n"; return 11; }
             } else if (op == "find_universe_not_store") {
                 // args: ttl exclude1 exclude2 ...
                 std::vector<std::string> set_keys;
@@ -430,7 +458,8 @@ int main(int argc, char** argv) {
                 }
                 tmp_key = make_tmp_key("unot", ttl);
                 // universe \ excludes
-                ok_store = r.store_not_expire_lua(ttl, "er:all", set_keys, tmp_key);
+                auto ok_store = r.store_not_expire_lua(ttl, er::keys::universe(), set_keys, tmp_key);
+                if (!ok_store) { std::cerr << "STORE+EXPIRE failed: " << ok_store.error().msg << "\n"; return 11; }
 
             } else if (op == "find_all_not_store") {
                 // args: ttl include exclude1 exclude2 ...
@@ -443,13 +472,14 @@ int main(int argc, char** argv) {
                 }
 
                 tmp_key = make_tmp_key("andnot", ttl);
-                ok_store = r.store_all_not_expire_lua(
+                auto ok_store = r.store_all_not_expire_lua(
                     ttl,
                     idx_key_for_bit(include_bit),
-                    "er:all",
+                    er::keys::universe(),
                     excludes,
                     tmp_key
                 );
+                if (!ok_store) { std::cerr << "STORE+EXPIRE failed: " << ok_store.error().msg << "\n"; return 11; }
             } else { // find_not_store
                 // args: ttl include exclude1 ...
                 const std::size_t include_bit = parse_bit_arg(cmd_argv[2]);
@@ -461,12 +491,8 @@ int main(int argc, char** argv) {
                 }
                 if (excludes.empty()) { usage(); return 1; }
                 tmp_key = make_tmp_key("not", ttl);
-                ok_store = r.store_not_expire_lua(ttl, idx_key_for_bit(include_bit), excludes, tmp_key);
-            }
-
-            if (!ok_store) {
-                std::cerr << "STORE+EXPIRE failed\n";
-                return 11;
+                auto ok_store = r.store_not_expire_lua(ttl, idx_key_for_bit(include_bit), excludes, tmp_key);
+                if (!ok_store) { std::cerr << "STORE+EXPIRE failed: " << ok_store.error().msg << "\n"; return 11; }
             }
 
             if (inv.keys_only) {
@@ -475,14 +501,11 @@ int main(int argc, char** argv) {
             }
 
             // pokaži ključ + rezultate (možeš kasnije prebaciti da samo printa ključ)
-            std::vector<std::string> members;
-            if (!r.smembers(tmp_key, members)) {
-                std::cerr << "SMEMBERS tmp_key failed\n";
-                return 12;
-            }
+            auto members = r.smembers(tmp_key);
+            if (!members) { std::cerr << "SMEMBERS tmp_key failed: " << members.error().msg << "\n"; return 12; }
 
             std::cout << "TMP_KEY: " << tmp_key << " (ttl=" << ttl << "s)\n";
-            print_members("Result:", members);
+            print_members("Result:", members.value());
             return 0;
         }
 
@@ -490,9 +513,9 @@ int main(int argc, char** argv) {
         if (op == "show") {
             if (cmd_argc < 2) { usage(); return 1; }
             const std::string k = cmd_argv[1];
-            std::vector<std::string> members;
-            if (!r.smembers(k, members)) { std::cerr << "SMEMBERS failed\n"; return 13; }
-            print_members("SHOW: " + k, members);
+            auto members = r.smembers(k);
+            if (!members) { std::cerr << "SMEMBERS failed: " << members.error().msg << "\n"; return 13; }
+            print_members("SHOW: " + k, members.value());
             return 0;
         }
 

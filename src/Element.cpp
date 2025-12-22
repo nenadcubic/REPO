@@ -1,26 +1,26 @@
 #include "er/Element.hpp"
-#include <stdexcept>
 
 namespace er {
 
-static void check_name(const std::string& n) {
-    if (n.size() > 100) {
-        throw std::length_error("Element name exceeds 100 characters");
-    }
+static Result<Unit> check_name(std::string_view n) noexcept {
+    if (n.size() > 100) return Result<Unit>::err(Errc::kInvalidArg, "Element name exceeds 100 characters");
+    return Result<Unit>::ok();
 }
 
-Element::Element(std::string name) : name_(std::move(name)) {
-    check_name(name_);
+Element::Element(std::string name) : name_(std::move(name)) {}
+
+Result<Element> Element::create(std::string name) {
+    if (auto ok = check_name(name); !ok) return Result<Element>::err(ok.error().code, ok.error().msg);
+    return Result<Element>::ok(Element(std::move(name)));
 }
 
-void Element::set_name(const std::string& name) {
-    check_name(name);
-    name_ = name;
+Result<Unit> Element::set_name(std::string name) {
+    if (auto ok = check_name(name); !ok) return ok;
+    name_ = std::move(name);
+    return Result<Unit>::ok();
 }
 
-const std::string& Element::name() const {
-    return name_;
-}
+std::string_view Element::name() const noexcept { return name_; }
 
 Flags4096& Element::flags() {
     return flags_;
