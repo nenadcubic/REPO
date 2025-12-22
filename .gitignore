@@ -1,2 +1,6 @@
 /build/
 .relay/
+examples/northwind/northwind.sqlite
+examples/northwind/*.sqlite
+__pycache__/
+*.pyc

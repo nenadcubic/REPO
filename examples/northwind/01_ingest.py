@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sqlite3
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import redis
+
+
+def env_str(name: str, default: str) -> str:
+    v = os.getenv(name)
+    return v if v else default
+
+
+def env_int(name: str, default: int) -> int:
+    v = os.getenv(name)
+    return int(v) if v else default
+
+
+def chunked(items: List[str], n: int) -> Iterable[List[str]]:
+    for i in range(0, len(items), n):
+        yield items[i : i + n]
+
+
+def find_table(conn: sqlite3.Connection, candidates: List[str]) -> Optional[str]:
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    by_lower = {r[0].lower(): r[0] for r in rows}
+    for c in candidates:
+        hit = by_lower.get(c.lower())
+        if hit:
+            return hit
+    return None
+
+
+def load_schema_bits(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def main() -> int:
+    here = Path(__file__).resolve().parent
+    ap = argparse.ArgumentParser(description="Ingest Northwind SQLite → Redis sets (nw:*)")
+    ap.add_argument(
+        "--db",
+        default=env_str("NW_DB_PATH", str(here / "northwind.sqlite")),
+        help="Path to northwind.sqlite (default: examples/northwind/northwind.sqlite)",
+    )
+    ap.add_argument(
+        "--schema-bits",
+        default=env_str("NW_SCHEMA_BITS", str(here / "schema_bits.json")),
+        help="Path to schema_bits.json (default: examples/northwind/schema_bits.json)",
+    )
+    ap.add_argument(
+        "--redis-host",
+        default=env_str("NW_REDIS_HOST", "localhost"),
+        help="Redis host (default: NW_REDIS_HOST or localhost)",
+    )
+    ap.add_argument(
+        "--redis-port",
+        type=int,
+        default=env_int("NW_REDIS_PORT", 6379),
+        help="Redis port (default: NW_REDIS_PORT or 6379)",
+    )
+    ap.add_argument(
+        "--prefix",
+        default=env_str("NW_PREFIX", "nw"),
+        help="Redis key prefix (default: nw)",
+    )
+    ap.add_argument(
+        "--reset",
+        action="store_true",
+        help="Delete existing keys under <prefix>:* before ingest (uses SCAN, not KEYS)",
+    )
+    args = ap.parse_args()
+
+    db_path = Path(args.db)
+    if not db_path.exists():
+        raise SystemExit(f"DB not found: {db_path} (run examples/northwind/00_get_db.sh)")
+
+    schema_bits = load_schema_bits(Path(args.schema_bits))
+    customers_country_bits: Dict[str, int] = (
+        schema_bits.get("customers", {}).get("country", {}) if isinstance(schema_bits, dict) else {}
+    )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        customers_table = find_table(conn, ["Customers", "Customer", "customers", "customer"])
+        orders_table = find_table(conn, ["Orders", "Order", "orders", "order"])
+        order_details_table = find_table(
+            conn,
+            [
+                "Order Details",
+                "OrderDetails",
+                "Order_Details",
+                "order_details",
+                "Order Detail",
+                "OrderDetail",
+                "orderdetail",
+            ],
+        )
+
+        if not customers_table or not orders_table or not order_details_table:
+            raise SystemExit(
+                "Expected Northwind tables not found. Need Customers, Orders, and Order Details.\n"
+                f"Found: Customers={customers_table}, Orders={orders_table}, OrderDetails={order_details_table}"
+            )
+
+        rows = conn.execute(f'SELECT CustomerID, Country FROM "{customers_table}"').fetchall()
+        customers: List[Tuple[str, str]] = [(str(rw["CustomerID"]), str(rw["Country"] or "")) for rw in rows]
+
+        order_rows = conn.execute(f'SELECT OrderID, CustomerID FROM "{orders_table}"').fetchall()
+        orders: List[Tuple[str, str]] = [(str(rw["OrderID"]), str(rw["CustomerID"])) for rw in order_rows]
+
+        od_rows = conn.execute(f'SELECT OrderID, ProductID FROM "{order_details_table}"').fetchall()
+        order_details: List[Tuple[str, str]] = [(str(rw["OrderID"]), str(rw["ProductID"])) for rw in od_rows]
+    finally:
+        conn.close()
+
+    r = redis.Redis(host=args.redis_host, port=args.redis_port, decode_responses=True)
+    r.ping()
+
+    prefix = args.prefix.rstrip(":")
+    if args.reset:
+        if not prefix:
+            raise SystemExit("Refusing to --reset with empty prefix (set --prefix or NW_PREFIX)")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:_-]*", prefix):
+            raise SystemExit(
+                f"Refusing to --reset with unsafe prefix: {prefix!r} (allowed: [A-Za-z0-9][A-Za-z0-9:_-]*)"
+            )
+        pattern = f"{prefix}:*"
+        cursor = 0
+        deleted = 0
+        while True:
+            cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+            if keys:
+                dpipe = r.pipeline(transaction=False)
+                for k in keys:
+                    dpipe.delete(k)
+                res = dpipe.execute()
+                deleted += sum(int(x) for x in res)
+            if int(cursor) == 0:
+                break
+        print(f"Reset done: deleted {deleted} keys (match: {pattern})")
+    k_customers_all = f"{prefix}:customers:all"
+    k_orders_all = f"{prefix}:orders:all"
+
+    pipe = r.pipeline(transaction=False)
+
+    customer_ids = [cid for cid, _ in customers]
+    for ch in chunked(customer_ids, 1000):
+        pipe.sadd(k_customers_all, *ch)
+
+    for cid, country in customers:
+        bit = customers_country_bits.get(country.strip())
+        if bit is None:
+            continue
+        if not (0 <= int(bit) < 4096):
+            raise SystemExit(f"Invalid bit for customers.country.{country}: {bit} (expected 0..4095)")
+        pipe.sadd(f"{prefix}:idx:customers:bit:{int(bit)}", cid)
+
+    order_ids = [oid for oid, _ in orders]
+    for ch in chunked(order_ids, 1000):
+        pipe.sadd(k_orders_all, *ch)
+    for oid, cid in orders:
+        pipe.sadd(f"{prefix}:orders:customer:{cid}", oid)
+
+    for oid, pid in order_details:
+        pipe.sadd(f"{prefix}:order_items:order:{oid}", pid)
+        pipe.sadd(f"{prefix}:orders:has_product:{pid}", oid)
+
+    pipe.execute()
+
+    print("OK: ingested Northwind → Redis")
+    print(f"DB: {db_path}")
+    print(f"Redis: {args.redis_host}:{args.redis_port}")
+    print(f"Prefix: {prefix}:")
+    print(f"Customers: {len(customers)} (key: {k_customers_all})")
+    print(f"Orders: {len(orders)} (key: {k_orders_all})")
+    print(f"OrderDetails: {len(order_details)} (key pattern: {prefix}:order_items:order:<OrderID>)")
+    if customers_country_bits:
+        print("Customer country bits:")
+        for token, bit in sorted(customers_country_bits.items(), key=lambda kv: int(kv[1])):
+            print(f" - bit {int(bit)} = {token} (key: {prefix}:idx:customers:bit:{int(bit)})")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
