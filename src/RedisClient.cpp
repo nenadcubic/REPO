@@ -353,11 +353,34 @@ std::string er::RedisClient::make_tmp_key(const std::string& tag) {
 
 static bool eval_ok(redisReply* r) {
     if (!r) return false;
-    // EVAL returns integer (count), or array, etc. We accept INTEGER >=0
-    if (r->type == REDIS_REPLY_INTEGER) return true;
-    // Some redis versions return status "OK" for some ops
-    if (r->type == REDIS_REPLY_STATUS) return true;
-    return true;
+    if (r->type == REDIS_REPLY_ERROR) return false;
+    return r->type == REDIS_REPLY_INTEGER || r->type == REDIS_REPLY_STATUS;
+}
+
+static bool eval_lua(redisContext* c,
+                     const char* script,
+                     const std::vector<std::string>& keys,
+                     const std::vector<std::string>& argv) {
+    if (!c || !script) return false;
+
+    std::vector<std::string> cmd;
+    cmd.reserve(3 + keys.size() + argv.size());
+    cmd.push_back("EVAL");
+    cmd.push_back(script);
+    cmd.push_back(std::to_string(static_cast<int>(keys.size())));
+    for (const auto& k : keys) cmd.push_back(k);
+    for (const auto& a : argv) cmd.push_back(a);
+
+    std::vector<const char*> cstr;
+    std::vector<size_t> lens;
+    cstr.reserve(cmd.size());
+    lens.reserve(cmd.size());
+    for (auto& s : cmd) { cstr.push_back(s.c_str()); lens.push_back(s.size()); }
+
+    redisReply* r = (redisReply*)redisCommandArgv(c, (int)cstr.size(), cstr.data(), lens.data());
+    bool ok = eval_ok(r);
+    if (r) freeReplyObject(r);
+    return ok;
 }
 
 bool er::RedisClient::store_all_expire_lua(int ttl_seconds,
@@ -374,35 +397,14 @@ redis.call('SINTERSTORE', out, unpack(KEYS))
 if ttl and ttl > 0 then
   redis.call('EXPIRE', out, ttl)
 end
-return redis.call('SCARD', out)
+	return redis.call('SCARD', out)
 )lua";
 
-    std::vector<const char*> argv;
-    std::vector<std::string> args;
-    args.reserve(2);
-    args.push_back(std::to_string(ttl_seconds));
-    args.push_back(out_key);
-
-    // Build redisCommand: EVAL script numkeys key1 key2 ... argv1 argv2
-    // We'll use redisCommandArgv for safety
-    std::vector<std::string> cmd;
-    cmd.reserve(3 + set_keys.size() + args.size());
-    cmd.push_back("EVAL");
-    cmd.push_back(script);
-    cmd.push_back(std::to_string((int)set_keys.size()));
-    for (auto& k : set_keys) cmd.push_back(k);
-    for (auto& a : args) cmd.push_back(a);
-
-    std::vector<const char*> cstr;
-    std::vector<size_t> lens;
-    cstr.reserve(cmd.size());
-    lens.reserve(cmd.size());
-    for (auto& s : cmd) { cstr.push_back(s.c_str()); lens.push_back(s.size()); }
-
-    redisReply* r = (redisReply*)redisCommandArgv(ctx_.get(), (int)cstr.size(), cstr.data(), lens.data());
-    bool ok = eval_ok(r);
-    if (r) freeReplyObject(r);
-    return ok;
+    const std::vector<std::string> argv{
+        std::to_string(ttl_seconds),
+        out_key,
+    };
+    return eval_lua(ctx_.get(), script, set_keys, argv);
 }
 
 bool er::RedisClient::store_any_expire_lua(int ttl_seconds,
@@ -420,25 +422,11 @@ end
 return redis.call('SCARD', out)
 )lua";
 
-    std::vector<std::string> cmd;
-    cmd.reserve(3 + set_keys.size() + 2);
-    cmd.push_back("EVAL");
-    cmd.push_back(script);
-    cmd.push_back(std::to_string((int)set_keys.size()));
-    for (auto& k : set_keys) cmd.push_back(k);
-    cmd.push_back(std::to_string(ttl_seconds));
-    cmd.push_back(out_key);
-
-    std::vector<const char*> cstr;
-    std::vector<size_t> lens;
-    cstr.reserve(cmd.size());
-    lens.reserve(cmd.size());
-    for (auto& s : cmd) { cstr.push_back(s.c_str()); lens.push_back(s.size()); }
-
-    redisReply* r = (redisReply*)redisCommandArgv(ctx_.get(), (int)cstr.size(), cstr.data(), lens.data());
-    bool ok = eval_ok(r);
-    if (r) freeReplyObject(r);
-    return ok;
+    const std::vector<std::string> argv{
+        std::to_string(ttl_seconds),
+        out_key,
+    };
+    return eval_lua(ctx_.get(), script, set_keys, argv);
 }
 
 bool er::RedisClient::store_not_expire_lua(int ttl_seconds,
@@ -463,26 +451,11 @@ return redis.call('SCARD', out)
     keys.reserve(1 + set_keys.size());
     keys.push_back(universe_key);
     for (auto& k : set_keys) keys.push_back(k);
-
-    std::vector<std::string> cmd;
-    cmd.reserve(3 + keys.size() + 2);
-    cmd.push_back("EVAL");
-    cmd.push_back(script);
-    cmd.push_back(std::to_string((int)keys.size()));
-    for (auto& k : keys) cmd.push_back(k);
-    cmd.push_back(std::to_string(ttl_seconds));
-    cmd.push_back(out_key);
-
-    std::vector<const char*> cstr;
-    std::vector<size_t> lens;
-    cstr.reserve(cmd.size());
-    lens.reserve(cmd.size());
-    for (auto& s : cmd) { cstr.push_back(s.c_str()); lens.push_back(s.size()); }
-
-    redisReply* r = (redisReply*)redisCommandArgv(ctx_.get(), (int)cstr.size(), cstr.data(), lens.data());
-    bool ok = eval_ok(r);
-    if (r) freeReplyObject(r);
-    return ok;
+    const std::vector<std::string> argv{
+        std::to_string(ttl_seconds),
+        out_key,
+    };
+    return eval_lua(ctx_.get(), script, keys, argv);
 }
 
 bool er::RedisClient::store_all_not_expire_lua(int ttl_seconds,
@@ -516,26 +489,11 @@ return redis.call('SCARD', out)
     keys.push_back(universe_key);
     for (const auto& k : exclude_keys) keys.push_back(k);
     keys.push_back(include_key);
-
-    std::vector<std::string> cmd;
-    cmd.reserve(3 + keys.size() + 2);
-    cmd.push_back("EVAL");
-    cmd.push_back(script);
-    cmd.push_back(std::to_string((int)keys.size()));
-    for (const auto& k : keys) cmd.push_back(k);
-    cmd.push_back(std::to_string(ttl_seconds));
-    cmd.push_back(out_key);
-
-    std::vector<const char*> cstr;
-    std::vector<size_t> lens;
-    cstr.reserve(cmd.size());
-    lens.reserve(cmd.size());
-    for (auto& s : cmd) { cstr.push_back(s.c_str()); lens.push_back(s.size()); }
-
-    redisReply* r = (redisReply*)redisCommandArgv(ctx_.get(), (int)cstr.size(), cstr.data(), lens.data());
-    bool ok = eval_ok(r);
-    if (r) freeReplyObject(r);
-    return ok;
+    const std::vector<std::string> argv{
+        std::to_string(ttl_seconds),
+        out_key,
+    };
+    return eval_lua(ctx_.get(), script, keys, argv);
 }
 
 bool er::RedisClient::del_key(const std::string& key) {
