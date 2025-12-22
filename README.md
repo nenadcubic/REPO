@@ -26,3 +26,6 @@ Examples (inside `dev`):
 - `./build/cli/er_cli --keys-only find_all_store 30 1 42`
 - `./build/cli/er_cli show <tmp_key>`
 - `./build/cli/er_cli del alice`
+
+Next:
+- Implementation checklist: `docs/TODO.md`
