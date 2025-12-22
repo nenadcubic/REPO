@@ -1,6 +1,6 @@
 #include "er/RedisClient.hpp"
 
-#include <cstdarg>
+#include <cstring>
 #include <memory>
 #include <vector>
 #include <chrono>
@@ -18,19 +18,6 @@ struct ReplyDeleter {
 
 using ReplyPtr = std::unique_ptr<redisReply, ReplyDeleter>;
 
-static Result<ReplyPtr> cmd(redisContext* c, const char* fmt, ...) noexcept {
-    if (!c) return Result<ReplyPtr>::err(Errc::kInternal, "redis context is null");
-    va_list ap;
-    va_start(ap, fmt);
-    void* r = redisvCommand(c, fmt, ap);
-    va_end(ap);
-    if (!r) {
-        if (c->err) return Result<ReplyPtr>::err(Errc::kRedisIo, c->errstr ? c->errstr : "redis I/O error");
-        return Result<ReplyPtr>::err(Errc::kRedisIo, "redis command failed (null reply)");
-    }
-    return Result<ReplyPtr>::ok(ReplyPtr(static_cast<redisReply*>(r)));
-}
-
 static Result<Unit> reply_no_error(const redisReply& r, std::string_view op) noexcept {
     if (r.type != REDIS_REPLY_ERROR) return Result<Unit>::ok();
     std::string msg = r.str ? std::string(r.str, static_cast<std::size_t>(r.len)) : "unknown redis error";
@@ -40,17 +27,36 @@ static Result<Unit> reply_no_error(const redisReply& r, std::string_view op) noe
     return Result<Unit>::err(Errc::kRedisProtocol, std::move(full));
 }
 
-static Result<ReplyPtr> command_argv(redisContext* c, const std::vector<std::string>& args) noexcept {
-    if (!c) return Result<ReplyPtr>::err(Errc::kInternal, "redis context is null");
-    std::vector<const char*> argv;
-    std::vector<size_t> argvlen;
-    argv.reserve(args.size());
-    argvlen.reserve(args.size());
-    for (const auto& s : args) {
-        argv.push_back(s.c_str());
-        argvlen.push_back(s.size());
+class ArgvBuilder {
+public:
+    explicit ArgvBuilder(std::size_t reserve_n = 0) {
+        argv_.reserve(reserve_n);
+        argvlen_.reserve(reserve_n);
     }
-    void* r = redisCommandArgv(c, static_cast<int>(argv.size()), argv.data(), argvlen.data());
+
+    void push(std::string_view s) {
+        argv_.push_back(s.data());
+        argvlen_.push_back(s.size());
+    }
+
+    void push_bytes(const void* data, std::size_t len) {
+        argv_.push_back(static_cast<const char*>(data));
+        argvlen_.push_back(len);
+    }
+
+    [[nodiscard]] int argc() const noexcept { return static_cast<int>(argv_.size()); }
+    // hiredis takes `const char**` (not `const char* const*`), even though it doesn't mutate argv.
+    [[nodiscard]] const char** argv() const noexcept { return const_cast<const char**>(argv_.data()); }
+    [[nodiscard]] const size_t* argvlen() const noexcept { return argvlen_.data(); }
+
+private:
+    std::vector<const char*> argv_{};
+    std::vector<size_t> argvlen_{};
+};
+
+static Result<ReplyPtr> command_argv(redisContext* c, const ArgvBuilder& args) noexcept {
+    if (!c) return Result<ReplyPtr>::err(Errc::kInternal, "redis context is null");
+    void* r = redisCommandArgv(c, args.argc(), args.argv(), args.argvlen());
     if (!r) {
         if (c->err) return Result<ReplyPtr>::err(Errc::kRedisIo, c->errstr ? c->errstr : "redis I/O error");
         return Result<ReplyPtr>::err(Errc::kRedisIo, "redis command failed (null reply)");
@@ -96,7 +102,9 @@ Result<RedisClient> RedisClient::connect(std::string host, int port, int timeout
 RedisClient::~RedisClient() = default;
 
 Result<Unit> RedisClient::ping() noexcept {
-    auto r = cmd(ctx_.get(), "PING");
+    ArgvBuilder args(1);
+    args.push("PING");
+    auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<Unit>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "PING"); !ok) return ok;
     if (r.value()->type == REDIS_REPLY_STATUS && r.value()->str &&
@@ -109,8 +117,12 @@ Result<Unit> RedisClient::ping() noexcept {
 // ---- HASH ----
 
 Result<long long> RedisClient::hset(std::string_view key, std::string_view field, std::string_view value) noexcept {
-    const std::string k(key), f(field), v(value);
-    auto r = cmd(ctx_.get(), "HSET %s %s %s", k.c_str(), f.c_str(), v.c_str());
+    ArgvBuilder args(4);
+    args.push("HSET");
+    args.push(key);
+    args.push(field);
+    args.push(value);
+    auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<long long>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "HSET"); !ok) return Result<long long>::err(ok.error().code, ok.error().msg);
     if (r.value()->type != REDIS_REPLY_INTEGER) return Result<long long>::err(Errc::kRedisReplyType, "HSET: expected integer reply");
@@ -118,8 +130,11 @@ Result<long long> RedisClient::hset(std::string_view key, std::string_view field
 }
 
 Result<std::string> RedisClient::hget(std::string_view key, std::string_view field) noexcept {
-    const std::string k(key), f(field);
-    auto r = cmd(ctx_.get(), "HGET %s %s", k.c_str(), f.c_str());
+    ArgvBuilder args(3);
+    args.push("HGET");
+    args.push(key);
+    args.push(field);
+    auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<std::string>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "HGET"); !ok) return Result<std::string>::err(ok.error().code, ok.error().msg);
     if (r.value()->type == REDIS_REPLY_NIL) return Result<std::string>::err(Errc::kNotFound, "HGET: not found");
@@ -132,8 +147,12 @@ Result<long long> RedisClient::hset_bin(std::string_view key,
                                        std::string_view field,
                                        const void* data,
                                        std::size_t len) noexcept {
-    const std::string k(key), f(field);
-    auto r = cmd(ctx_.get(), "HSET %s %s %b", k.c_str(), f.c_str(), data, len);
+    ArgvBuilder args(4);
+    args.push("HSET");
+    args.push(key);
+    args.push(field);
+    args.push_bytes(data, len);
+    auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<long long>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "HSET(bin)"); !ok) return Result<long long>::err(ok.error().code, ok.error().msg);
     if (r.value()->type != REDIS_REPLY_INTEGER) return Result<long long>::err(Errc::kRedisReplyType, "HSET(bin): expected integer reply");
@@ -148,8 +167,11 @@ Result<std::string> RedisClient::hget_bin(std::string_view key, std::string_view
 // ---- SET basic ----
 
 Result<long long> RedisClient::sadd(std::string_view key, std::string_view member) noexcept {
-    const std::string k(key), m(member);
-    auto r = cmd(ctx_.get(), "SADD %s %s", k.c_str(), m.c_str());
+    ArgvBuilder args(3);
+    args.push("SADD");
+    args.push(key);
+    args.push(member);
+    auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<long long>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "SADD"); !ok) return Result<long long>::err(ok.error().code, ok.error().msg);
     if (r.value()->type != REDIS_REPLY_INTEGER) return Result<long long>::err(Errc::kRedisReplyType, "SADD: expected integer reply");
@@ -157,8 +179,11 @@ Result<long long> RedisClient::sadd(std::string_view key, std::string_view membe
 }
 
 Result<long long> RedisClient::srem(std::string_view key, std::string_view member) noexcept {
-    const std::string k(key), m(member);
-    auto r = cmd(ctx_.get(), "SREM %s %s", k.c_str(), m.c_str());
+    ArgvBuilder args(3);
+    args.push("SREM");
+    args.push(key);
+    args.push(member);
+    auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<long long>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "SREM"); !ok) return Result<long long>::err(ok.error().code, ok.error().msg);
     if (r.value()->type != REDIS_REPLY_INTEGER) return Result<long long>::err(Errc::kRedisReplyType, "SREM: expected integer reply");
@@ -166,8 +191,10 @@ Result<long long> RedisClient::srem(std::string_view key, std::string_view membe
 }
 
 Result<std::vector<std::string>> RedisClient::smembers(std::string_view key) noexcept {
-    const std::string k(key);
-    auto r = cmd(ctx_.get(), "SMEMBERS %s", k.c_str());
+    ArgvBuilder args(2);
+    args.push("SMEMBERS");
+    args.push(key);
+    auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<std::vector<std::string>>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "SMEMBERS"); !ok)
         return Result<std::vector<std::string>>::err(ok.error().code, ok.error().msg);
@@ -176,11 +203,9 @@ Result<std::vector<std::string>> RedisClient::smembers(std::string_view key) noe
 
 Result<std::vector<std::string>> RedisClient::sinter(const std::vector<std::string>& keys) noexcept {
     if (keys.empty()) return Result<std::vector<std::string>>::ok({});
-    std::vector<std::string> args;
-    args.reserve(keys.size() + 1);
-    args.push_back("SINTER");
-    for (const auto& k : keys) args.push_back(k);
-
+    ArgvBuilder args(keys.size() + 1);
+    args.push("SINTER");
+    for (const auto& k : keys) args.push(k);
     auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<std::vector<std::string>>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "SINTER"); !ok)
@@ -190,11 +215,9 @@ Result<std::vector<std::string>> RedisClient::sinter(const std::vector<std::stri
 
 Result<std::vector<std::string>> RedisClient::sunion(const std::vector<std::string>& keys) noexcept {
     if (keys.empty()) return Result<std::vector<std::string>>::ok({});
-    std::vector<std::string> args;
-    args.reserve(keys.size() + 1);
-    args.push_back("SUNION");
-    for (const auto& k : keys) args.push_back(k);
-
+    ArgvBuilder args(keys.size() + 1);
+    args.push("SUNION");
+    for (const auto& k : keys) args.push(k);
     auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<std::vector<std::string>>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "SUNION"); !ok)
@@ -204,11 +227,9 @@ Result<std::vector<std::string>> RedisClient::sunion(const std::vector<std::stri
 
 Result<std::vector<std::string>> RedisClient::sdiff(const std::vector<std::string>& keys) noexcept {
     if (keys.empty()) return Result<std::vector<std::string>>::ok({});
-    std::vector<std::string> args;
-    args.reserve(keys.size() + 1);
-    args.push_back("SDIFF");
-    for (const auto& k : keys) args.push_back(k);
-
+    ArgvBuilder args(keys.size() + 1);
+    args.push("SDIFF");
+    for (const auto& k : keys) args.push(k);
     auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<std::vector<std::string>>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "SDIFF"); !ok)
@@ -220,8 +241,12 @@ Result<std::vector<std::string>> RedisClient::sdiff(const std::vector<std::strin
 
 Result<Unit> RedisClient::expire_seconds(std::string_view key, int ttl_seconds) noexcept {
     if (ttl_seconds <= 0) return Result<Unit>::err(Errc::kInvalidArg, "EXPIRE ttl_seconds must be > 0");
-    const std::string k(key);
-    auto r = cmd(ctx_.get(), "EXPIRE %s %d", k.c_str(), ttl_seconds);
+    const std::string ttl_str = std::to_string(ttl_seconds);
+    ArgvBuilder args(3);
+    args.push("EXPIRE");
+    args.push(key);
+    args.push(ttl_str);
+    auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<Unit>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "EXPIRE"); !ok) return ok;
     if (r.value()->type != REDIS_REPLY_INTEGER) return Result<Unit>::err(Errc::kRedisReplyType, "EXPIRE: expected integer reply");
@@ -236,12 +261,10 @@ static Result<long long> store_op(redisContext* c,
                                  std::string_view dst,
                                  const std::vector<std::string>& keys) noexcept {
     if (keys.empty()) return Result<long long>::err(Errc::kInvalidArg, "store op requires at least one key");
-    std::vector<std::string> args;
-    args.reserve(keys.size() + 2);
-    args.push_back(std::string(op));
-    args.push_back(std::string(dst));
-    for (const auto& k : keys) args.push_back(k);
-
+    ArgvBuilder args(keys.size() + 2);
+    args.push(op);
+    args.push(dst);
+    for (const auto& k : keys) args.push(k);
     auto r = command_argv(c, args);
     if (!r) return Result<long long>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), op); !ok) return Result<long long>::err(ok.error().code, ok.error().msg);
@@ -284,55 +307,39 @@ Result<long long> RedisClient::store_expire_lua(std::string_view op,
     )";
 
     // EVAL <script> <numkeys> key1 key2 ... op dst ttl
-    std::vector<std::string> args;
-    args.reserve(3 + 1 + keys.size() + 3);
+    const std::string numkeys_str = std::to_string(keys.size());
+    const std::string ttl_str = std::to_string(ttl_seconds);
 
-    args.push_back("EVAL");
-    args.push_back(kLua);
-    args.push_back(std::to_string(keys.size()));
-    for (const auto& k : keys) args.push_back(k);
+    ArgvBuilder args(keys.size() + 6);
+    args.push("EVAL");
+    args.push(std::string_view(kLua, std::strlen(kLua)));
+    args.push(numkeys_str);
+    for (const auto& k : keys) args.push(k);
+    args.push(op);
+    args.push(dst);
+    args.push(ttl_str);
 
-    args.push_back(std::string(op));
-    args.push_back(std::string(dst));
-    args.push_back(std::to_string(ttl_seconds));
-
-    // send via hiredis argv (binary safe)
-    std::vector<const char*> argv;
-    std::vector<size_t> argvlen;
-    argv.reserve(args.size());
-    argvlen.reserve(args.size());
-
-    for (const auto& s : args) {
-        argv.push_back(s.c_str());
-        argvlen.push_back(s.size());
-    }
-
-    void* raw = redisCommandArgv(ctx_.get(),
-                                static_cast<int>(argv.size()),
-                                argv.data(),
-                                argvlen.data());
-    if (!raw) {
-        if (ctx_ && ctx_->err) return Result<long long>::err(Errc::kRedisIo, ctx_->errstr ? ctx_->errstr : "redis I/O error");
-        return Result<long long>::err(Errc::kRedisIo, "redis EVAL failed (null reply)");
-    }
-    ReplyPtr r(static_cast<redisReply*>(raw));
-    if (auto ok = reply_no_error(*r, "EVAL(store_expire_lua)"); !ok) return Result<long long>::err(ok.error().code, ok.error().msg);
-    if (r->type != REDIS_REPLY_INTEGER) return Result<long long>::err(Errc::kRedisReplyType, "store_expire_lua: expected integer reply");
-    return Result<long long>::ok(r->integer);
+    auto r = command_argv(ctx_.get(), args);
+    if (!r) return Result<long long>::err(r.error().code, r.error().msg);
+    if (auto ok = reply_no_error(*r.value(), "EVAL(store_expire_lua)"); !ok)
+        return Result<long long>::err(ok.error().code, ok.error().msg);
+    if (r.value()->type != REDIS_REPLY_INTEGER)
+        return Result<long long>::err(Errc::kRedisReplyType, "store_expire_lua: expected integer reply");
+    return Result<long long>::ok(r.value()->integer);
 }
 
 static Result<long long> eval_lua(redisContext* c,
-                                 const char* script,
+                                 std::string_view script,
                                  const std::vector<std::string>& keys,
                                  const std::vector<std::string>& argv) noexcept {
-    if (!c || !script) return Result<long long>::err(Errc::kInternal, "eval_lua: null context/script");
-    std::vector<std::string> cmd;
-    cmd.reserve(3 + keys.size() + argv.size());
-    cmd.push_back("EVAL");
-    cmd.push_back(script);
-    cmd.push_back(std::to_string(static_cast<int>(keys.size())));
-    for (const auto& k : keys) cmd.push_back(k);
-    for (const auto& a : argv) cmd.push_back(a);
+    if (!c || script.empty()) return Result<long long>::err(Errc::kInternal, "eval_lua: null context/script");
+    const std::string numkeys_str = std::to_string(static_cast<int>(keys.size()));
+    ArgvBuilder cmd(3 + keys.size() + argv.size());
+    cmd.push("EVAL");
+    cmd.push(script);
+    cmd.push(numkeys_str);
+    for (const auto& k : keys) cmd.push(k);
+    for (const auto& a : argv) cmd.push(a);
 
     auto r = command_argv(c, cmd);
     if (!r) return Result<long long>::err(r.error().code, r.error().msg);
@@ -358,13 +365,13 @@ if ttl and ttl > 0 then
   redis.call('EXPIRE', out, ttl)
 end
 	return redis.call('SCARD', out)
-)lua";
+	)lua";
 
     const std::vector<std::string> argv{
         std::to_string(ttl_seconds),
         std::string(out_key),
     };
-    return eval_lua(ctx_.get(), script, set_keys, argv);
+    return eval_lua(ctx_.get(), std::string_view(script, std::strlen(script)), set_keys, argv);
 }
 
 Result<long long> er::RedisClient::store_any_expire_lua(int ttl_seconds,
@@ -382,13 +389,13 @@ if ttl and ttl > 0 then
   redis.call('EXPIRE', out, ttl)
 end
 return redis.call('SCARD', out)
-)lua";
+	)lua";
 
     const std::vector<std::string> argv{
         std::to_string(ttl_seconds),
         std::string(out_key),
     };
-    return eval_lua(ctx_.get(), script, set_keys, argv);
+    return eval_lua(ctx_.get(), std::string_view(script, std::strlen(script)), set_keys, argv);
 }
 
 Result<long long> er::RedisClient::store_not_expire_lua(int ttl_seconds,
@@ -408,7 +415,7 @@ if ttl and ttl > 0 then
   redis.call('EXPIRE', out, ttl)
 end
 return redis.call('SCARD', out)
-)lua";
+	)lua";
 
     std::vector<std::string> keys;
     keys.reserve(1 + set_keys.size());
@@ -418,7 +425,7 @@ return redis.call('SCARD', out)
         std::to_string(ttl_seconds),
         std::string(out_key),
     };
-    return eval_lua(ctx_.get(), script, keys, argv);
+    return eval_lua(ctx_.get(), std::string_view(script, std::strlen(script)), keys, argv);
 }
 
 Result<long long> er::RedisClient::store_all_not_expire_lua(int ttl_seconds,
@@ -455,7 +462,7 @@ if ttl and ttl > 0 then
 end
 redis.call('DEL', tmp)
 return redis.call('SCARD', out)
-)lua";
+	)lua";
 
     std::vector<std::string> keys;
     keys.reserve(2 + exclude_keys.size());
@@ -466,12 +473,14 @@ return redis.call('SCARD', out)
         std::to_string(ttl_seconds),
         std::string(out_key),
     };
-    return eval_lua(ctx_.get(), script, keys, argv);
+    return eval_lua(ctx_.get(), std::string_view(script, std::strlen(script)), keys, argv);
 }
 
 Result<long long> er::RedisClient::del_key(std::string_view key) noexcept {
-    const std::string k(key);
-    auto r = cmd(ctx_.get(), "DEL %s", k.c_str());
+    ArgvBuilder args(2);
+    args.push("DEL");
+    args.push(key);
+    auto r = command_argv(ctx_.get(), args);
     if (!r) return Result<long long>::err(r.error().code, r.error().msg);
     if (auto ok = reply_no_error(*r.value(), "DEL"); !ok) return Result<long long>::err(ok.error().code, ok.error().msg);
     if (r.value()->type != REDIS_REPLY_INTEGER) return Result<long long>::err(Errc::kRedisReplyType, "DEL: expected integer reply");
