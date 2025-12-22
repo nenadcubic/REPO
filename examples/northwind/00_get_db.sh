@@ -17,7 +17,7 @@ This script will try to download a known Northwind SQLite file and save it there
 If you prefer, you can place any Northwind SQLite DB at that path yourself.
 MSG
 
-URL="https://github.com/jpwhite3/northwind-SQLite3/raw/master/Northwind_small.sqlite"
+URL="https://raw.githubusercontent.com/jpwhite3/northwind-SQLite3/main/dist/northwind.db"
 EXPECTED_SHA256="${NW_DB_SHA256:-}"
 
 echo "Downloading: $URL"
