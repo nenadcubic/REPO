@@ -6,10 +6,15 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-import redis
+try:
+    import redis  # type: ignore
+except ImportError:  # pragma: no cover
+    redis = None
 
 
 def env_str(name: str, default: str) -> str:
@@ -42,6 +47,49 @@ def load_schema_bits(path: Path) -> Dict[str, Any]:
         return {}
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+def _require_cmd(name: str) -> None:
+    if shutil.which(name) is None:
+        raise SystemExit(f"Missing required command: {name}")
+
+
+def _encode_redis_cmd(argv: List[str]) -> bytes:
+    # RESP (Redis Serialization Protocol), used by `redis-cli --pipe`.
+    out = [f"*{len(argv)}\r\n".encode("utf-8")]
+    for a in argv:
+        b = a.encode("utf-8")
+        out.append(f"${len(b)}\r\n".encode("utf-8"))
+        out.append(b)
+        out.append(b"\r\n")
+    return b"".join(out)
+
+
+def _redis_cli(host: str, port: int, argv: List[str]) -> str:
+    p = subprocess.run(
+        ["redis-cli", "-h", host, "-p", str(port), *argv],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if p.returncode != 0:
+        raise SystemExit(f"redis-cli failed: {' '.join(argv)}\n{p.stderr}{p.stdout}")
+    return p.stdout
+
+
+def _redis_pipe(host: str, port: int, commands: List[List[str]]) -> None:
+    payload = b"".join(_encode_redis_cmd(cmd) for cmd in commands)
+    p = subprocess.run(
+        ["redis-cli", "-h", host, "-p", str(port), "--pipe"],
+        input=payload,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if p.returncode != 0:
+        out = p.stdout.decode("utf-8", "replace")
+        err = p.stderr.decode("utf-8", "replace")
+        raise SystemExit(f"redis-cli --pipe failed\n{err}{out}")
 
 
 def main() -> int:
@@ -127,10 +175,8 @@ def main() -> int:
     finally:
         conn.close()
 
-    r = redis.Redis(host=args.redis_host, port=args.redis_port, decode_responses=True)
-    r.ping()
-
     prefix = args.prefix.rstrip(":")
+    reset_pattern: Optional[str] = None
     if args.reset:
         if not prefix:
             raise SystemExit("Refusing to --reset with empty prefix (set --prefix or NW_PREFIX)")
@@ -138,65 +184,125 @@ def main() -> int:
             raise SystemExit(
                 f"Refusing to --reset with unsafe prefix: {prefix!r} (allowed: [A-Za-z0-9][A-Za-z0-9:_-]*)"
             )
-        pattern = f"{prefix}:*"
-        cursor = 0
-        deleted = 0
-        while True:
-            cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
-            if keys:
-                dpipe = r.pipeline(transaction=False)
-                for k in keys:
-                    dpipe.delete(k)
-                res = dpipe.execute()
-                deleted += sum(int(x) for x in res)
-            if int(cursor) == 0:
-                break
-        print(f"Reset done: deleted {deleted} keys (match: {pattern})")
+        reset_pattern = f"{prefix}:*"
     k_customers_all = f"{prefix}:customers:all"
     k_orders_all = f"{prefix}:orders:all"
-
-    pipe = r.pipeline(transaction=False)
-
     customer_ids = [cid for cid, _ in customers]
-    for ch in chunked(customer_ids, 1000):
-        pipe.sadd(k_customers_all, *ch)
-
-    for cid, country in customers:
-        bit = customers_country_bits.get(country.strip())
-        if bit is None:
-            continue
-        if not (0 <= int(bit) < 4096):
-            raise SystemExit(f"Invalid bit for customers.country.{country}: {bit} (expected 0..4095)")
-        pipe.sadd(f"{prefix}:idx:customers:bit:{int(bit)}", cid)
-
     order_ids = [oid for oid, _, _ in orders]
-    for ch in chunked(order_ids, 1000):
-        pipe.sadd(k_orders_all, *ch)
-    for oid, cid, order_date in orders:
-        pipe.sadd(f"{prefix}:orders:customer:{cid}", oid)
-        if not order_date:
-            continue
-        # Northwind variants commonly use `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`; use the first 10 chars.
-        s = order_date[:10]
-        parts = s.split("-")
-        if len(parts) != 3:
-            continue
-        try:
-            year = int(parts[0])
-            month = int(parts[1])
-        except ValueError:
-            continue
-        if month < 1 or month > 12:
-            continue
-        quarter = (month - 1) // 3 + 1
-        pipe.sadd(f"{prefix}:idx:orders:year:{year}", oid)
-        pipe.sadd(f"{prefix}:idx:orders:quarter:Q{quarter}", oid)
 
-    for oid, pid in order_details:
-        pipe.sadd(f"{prefix}:order_items:order:{oid}", pid)
-        pipe.sadd(f"{prefix}:orders:has_product:{pid}", oid)
+    if redis is None:
+        _require_cmd("redis-cli")
+        pong = _redis_cli(args.redis_host, args.redis_port, ["PING"]).strip()
+        if pong != "PONG":
+            raise SystemExit(f"Redis PING failed: {pong!r}")
 
-    pipe.execute()
+        if reset_pattern:
+            keys = _redis_cli(args.redis_host, args.redis_port, ["--scan", "--pattern", reset_pattern]).splitlines()
+            deleted = len(keys)
+            for batch in chunked(keys, 1000):
+                _redis_pipe(args.redis_host, args.redis_port, [["DEL", *batch]])
+            print(f"Reset done: deleted {deleted} keys (match: {reset_pattern})")
+
+        commands: List[List[str]] = []
+        def flush() -> None:
+            nonlocal commands
+            if not commands:
+                return
+            _redis_pipe(args.redis_host, args.redis_port, commands)
+            commands = []
+
+        for ch in chunked(customer_ids, 1000):
+            commands.append(["SADD", k_customers_all, *ch])
+        for cid, country in customers:
+            bit = customers_country_bits.get(country.strip())
+            if bit is None:
+                continue
+            if not (0 <= int(bit) < 4096):
+                raise SystemExit(f"Invalid bit for customers.country.{country}: {bit} (expected 0..4095)")
+            commands.append(["SADD", f"{prefix}:idx:customers:bit:{int(bit)}", cid])
+
+        for ch in chunked(order_ids, 1000):
+            commands.append(["SADD", k_orders_all, *ch])
+
+        for oid, cid, order_date in orders:
+            commands.append(["SADD", f"{prefix}:orders:customer:{cid}", oid])
+            if order_date:
+                s = order_date[:10]
+                parts = s.split("-")
+                if len(parts) == 3:
+                    try:
+                        year = int(parts[0])
+                        month = int(parts[1])
+                    except ValueError:
+                        year = 0
+                        month = 0
+                    if 1 <= month <= 12 and year:
+                        quarter = (month - 1) // 3 + 1
+                        commands.append(["SADD", f"{prefix}:idx:orders:year:{year}", oid])
+                        commands.append(["SADD", f"{prefix}:idx:orders:quarter:Q{quarter}", oid])
+
+        for oid, pid in order_details:
+            commands.append(["SADD", f"{prefix}:order_items:order:{oid}", pid])
+            commands.append(["SADD", f"{prefix}:orders:has_product:{pid}", oid])
+
+        flush()
+    else:
+        r = redis.Redis(host=args.redis_host, port=args.redis_port, decode_responses=True)
+        r.ping()
+        if reset_pattern:
+            cursor = 0
+            deleted = 0
+            while True:
+                cursor, keys = r.scan(cursor=cursor, match=reset_pattern, count=1000)
+                if keys:
+                    dpipe = r.pipeline(transaction=False)
+                    for k in keys:
+                        dpipe.delete(k)
+                    res = dpipe.execute()
+                    deleted += sum(int(x) for x in res)
+                if int(cursor) == 0:
+                    break
+            print(f"Reset done: deleted {deleted} keys (match: {reset_pattern})")
+        pipe = r.pipeline(transaction=False)
+
+        for ch in chunked(customer_ids, 1000):
+            pipe.sadd(k_customers_all, *ch)
+
+        for cid, country in customers:
+            bit = customers_country_bits.get(country.strip())
+            if bit is None:
+                continue
+            if not (0 <= int(bit) < 4096):
+                raise SystemExit(f"Invalid bit for customers.country.{country}: {bit} (expected 0..4095)")
+            pipe.sadd(f"{prefix}:idx:customers:bit:{int(bit)}", cid)
+
+        for ch in chunked(order_ids, 1000):
+            pipe.sadd(k_orders_all, *ch)
+        for oid, cid, order_date in orders:
+            pipe.sadd(f"{prefix}:orders:customer:{cid}", oid)
+            if not order_date:
+                continue
+            # Northwind variants commonly use `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`; use the first 10 chars.
+            s = order_date[:10]
+            parts = s.split("-")
+            if len(parts) != 3:
+                continue
+            try:
+                year = int(parts[0])
+                month = int(parts[1])
+            except ValueError:
+                continue
+            if month < 1 or month > 12:
+                continue
+            quarter = (month - 1) // 3 + 1
+            pipe.sadd(f"{prefix}:idx:orders:year:{year}", oid)
+            pipe.sadd(f"{prefix}:idx:orders:quarter:Q{quarter}", oid)
+
+        for oid, pid in order_details:
+            pipe.sadd(f"{prefix}:order_items:order:{oid}", pid)
+            pipe.sadd(f"{prefix}:orders:has_product:{pid}", oid)
+
+        pipe.execute()
 
     print("OK: ingested Northwind → Redis")
     print(f"DB: {db_path}")

@@ -13,9 +13,15 @@ NW_CLEAN_TMP="${NW_CLEAN_TMP:-0}"
 YEAR="${NW_YEAR:-1997}"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing required command: $1" >&2; exit 2; }; }
-need sqlite3
 need redis-cli
 need python3
+
+HAVE_SQLITE3_CLI=0
+if command -v sqlite3 >/dev/null 2>&1; then
+  HAVE_SQLITE3_CLI=1
+else
+  echo "WARN: sqlite3 CLI not found; using python sqlite3 for SQL execution."
+fi
 
 if [[ ! -f "$DB" ]]; then
   echo "ERROR: DB not found: $DB"
@@ -92,13 +98,36 @@ sql_quote_ident() {
   printf '"%s"' "$name"
 }
 
+sql() {
+  local query="$1"
+  if [[ "$HAVE_SQLITE3_CLI" == "1" ]]; then
+    sqlite3 -noheader -batch "$DB" "$query"
+    return
+  fi
+  python3 - "$DB" "$query" <<'PY'
+import sqlite3, sys
+db, query = sys.argv[1], sys.argv[2]
+conn = sqlite3.connect(db)
+try:
+    cur = conn.execute(query)
+    for row in cur.fetchall():
+        if not row:
+            print("")
+        else:
+            v = row[0]
+            print("" if v is None else v)
+finally:
+    conn.close()
+PY
+}
+
 OD_TABLE="$(
-  sqlite3 -noheader -batch "$DB" "
-    SELECT name
-    FROM sqlite_master
-    WHERE type='table'
-      AND lower(name) IN ('order details','orderdetails','order_details','order detail','orderdetail','order_detail')
-    LIMIT 1;
+  sql "
+  SELECT name
+  FROM sqlite_master
+  WHERE type='table'
+    AND lower(name) IN ('order details','orderdetails','order_details','order detail','orderdetail','order_detail')
+  LIMIT 1;
   "
 )"
 if [[ -z "${OD_TABLE:-}" ]]; then
@@ -108,21 +137,21 @@ fi
 OD_T="$(sql_quote_ident "$OD_TABLE")"
 
 C_TABLE="$(
-  sqlite3 -noheader -batch "$DB" "
-    SELECT name
-    FROM sqlite_master
-    WHERE type='table'
-      AND lower(name) IN ('customers','customer')
-    LIMIT 1;
+  sql "
+  SELECT name
+  FROM sqlite_master
+  WHERE type='table'
+    AND lower(name) IN ('customers','customer')
+  LIMIT 1;
   "
 )"
 O_TABLE="$(
-  sqlite3 -noheader -batch "$DB" "
-    SELECT name
-    FROM sqlite_master
-    WHERE type='table'
-      AND lower(name) IN ('orders','order')
-    LIMIT 1;
+  sql "
+  SELECT name
+  FROM sqlite_master
+  WHERE type='table'
+    AND lower(name) IN ('orders','order')
+  LIMIT 1;
   "
 )"
 if [[ -z "${C_TABLE:-}" || -z "${O_TABLE:-}" ]]; then
@@ -199,8 +228,12 @@ compare_sql_vs_set() {
   cleanup() { rm -f "$a" "$b"; }
   trap cleanup RETURN
 
-  sqlite3 -noheader -batch "$DB" "$sql" >"$a" || { echo "ERROR: sqlite3 failed for: $label" >&2; return 1; }
-  redis_raw SMEMBERS "$setkey" | LC_ALL=C sort >"$b" || { echo "ERROR: redis SMEMBERS failed for key: $setkey" >&2; return 1; }
+  sql "$sql" | sed '/^$/d' >"$a" || { echo "ERROR: SQL execution failed for: $label" >&2; return 1; }
+  # Some redis-cli versions output a single blank line for empty sets; filter empties to avoid false counts.
+  redis_raw SMEMBERS "$setkey" | sed '/^$/d' | LC_ALL=C sort >"$b" || {
+    echo "ERROR: redis SMEMBERS failed for key: $setkey" >&2
+    return 1
+  }
   LC_ALL=C sort -o "$a" "$a" || { echo "ERROR: sort failed for: $label" >&2; return 1; }
 
   local sql_n redis_n
@@ -245,9 +278,9 @@ compare_sql_vs_set \
 # 3) Customers NOT in Germany
 TMP_C_NOT_DE="$(tmp_key customers_not_de)"
 set_store_with_ttl SDIFFSTORE "$TMP_C_NOT_DE" "$TTL_SEC" "$K_CUSTOMERS_ALL" "$K_DE"
+# SQL note: `Country!='Germany'` filters out NULLs (3-valued logic). Set-diff includes them, so include NULL explicitly.
 compare_sql_vs_set \
   "Customers NOT in Germany" \
-  # SQL note: `Country!='Germany'` filters out NULLs (3-valued logic). Set-diff includes them, so include NULL explicitly.
   "SELECT CustomerID FROM $C_T WHERE Country IS NULL OR Country!='Germany' ORDER BY CustomerID;" \
   "$TMP_C_NOT_DE"
 
@@ -317,7 +350,9 @@ compare_sql_vs_set \
 ER_CLI="$DIR/../../build/cli/er_cli"
 if [[ -x "$ER_CLI" ]]; then
   echo "er_cli (optional): show one derived key"
-  ER_REDIS_HOST="$NW_REDIS_HOST" ER_REDIS_PORT="$NW_REDIS_PORT" "$ER_CLI" show "$TMP_O_DE_YEAR_Q1" | head -n 40
+  if ! ER_REDIS_HOST="$NW_REDIS_HOST" ER_REDIS_PORT="$NW_REDIS_PORT" "$ER_CLI" show "$TMP_O_DE_YEAR_Q1" | head -n 40; then
+    echo "WARN: er_cli failed (missing runtime deps?); skipping." >&2
+  fi
   echo
 fi
 

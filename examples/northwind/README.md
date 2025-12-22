@@ -21,6 +21,8 @@ This example ingests a Northwind SQLite DB into Redis using simple Redis `SET` i
 - `python3 -m venv .venv && . .venv/bin/activate`
 - `pip install -r examples/northwind/requirements.txt`
 
+If you don’t have `pip` / `venv`, `01_ingest.py` will fall back to using `redis-cli` (no extra Python deps), but it still requires `redis-cli` to be installed.
+
 3) Start Redis locally (or point at an existing Redis):
 
 - `export NW_REDIS_HOST=localhost`
@@ -34,6 +36,10 @@ This example ingests a Northwind SQLite DB into Redis using simple Redis `SET` i
 5) Compare queries:
 
 - `./examples/northwind/02_query_compare.sh`
+
+Notes:
+- Uses `sqlite3` CLI if available, otherwise falls back to Python’s built-in `sqlite3`.
+- If your DB doesn’t have orders in year `1997`, set `NW_YEAR` to a year that exists in your dump.
 
 Optional env vars:
 - `NW_PREFIX` (default `nw`)
