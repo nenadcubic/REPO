@@ -278,6 +278,7 @@
             <select id="examplesNs" class="input"></select>
             <label class="label">Example</label>
             <select id="examplesSelect" class="input"></select>
+            <div id="examplesMeta" class="help"></div>
             <div class="row">
               <label class="label" style="margin: 0; display: flex; align-items: center; gap: 8px">
                 <input id="examplesReset" type="checkbox" />
@@ -286,12 +287,48 @@
             </div>
             <div class="row">
               <button id="btnExamplesRun" class="btn primary">Load into Redis</button>
+              <button id="btnExamplesCompare" class="btn">Compare</button>
               <button id="btnExamplesRefresh" class="btn">Refresh list</button>
             </div>
-            <div class="panel">
-              <div class="panel-title">Result</div>
-              <pre id="examplesOut" class="out"></pre>
-              <div id="examplesLinks" class="row"></div>
+            <div class="grid2">
+              <div class="panel">
+                <div class="panel-title">README</div>
+                <div id="examplesReadme" class="md"></div>
+              </div>
+              <div class="panel">
+                <div class="panel-title">Result</div>
+                <pre id="examplesOut" class="out"></pre>
+                <div id="examplesLinks" class="row"></div>
+                <div id="examplesReports" class="panel" style="margin-top: 12px">
+                  <div class="panel-title">Compare</div>
+                  <div id="examplesRowCountsWrap" class="table-wrap hidden">
+                    <table class="table" style="min-width: 640px">
+                      <thead>
+                        <tr>
+                          <th>Table</th>
+                          <th>SQLite</th>
+                          <th>Redis</th>
+                          <th>Match</th>
+                        </tr>
+                      </thead>
+                      <tbody id="examplesRowCountsTbody"></tbody>
+                    </table>
+                  </div>
+                  <div id="examplesTotalsWrap" class="table-wrap hidden">
+                    <table class="table" style="min-width: 760px">
+                      <thead>
+                        <tr>
+                          <th>OrderID</th>
+                          <th>SQLite Total</th>
+                          <th>Redis Total</th>
+                          <th>Diff</th>
+                        </tr>
+                      </thead>
+                      <tbody id="examplesTotalsTbody"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
 

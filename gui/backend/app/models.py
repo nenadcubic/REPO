@@ -78,3 +78,8 @@ class StoreFindNot(BaseModel):
 
 
 StoreRequest = StoreFindAll | StoreFindAny | StoreFindNot
+
+
+class ExamplesRunRequest(BaseModel):
+    ns: str = Field(min_length=1)
+    reset: bool = False

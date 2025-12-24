@@ -53,7 +53,15 @@ echo "[3/6] config"
 json_get "/api/v1/config" | assert_ok_json
 
 echo "[3b/6] examples"
-json_get "/api/v1/examples" | assert_ok_json
+EXAMPLES_JSON="$(json_get "/api/v1/examples" | tee /tmp/er_gui_examples.json)"
+echo "$EXAMPLES_JSON" | assert_ok_json
+EX_ID="$(echo "$EXAMPLES_JSON" | python3 -c 'import json,sys;p=json.load(sys.stdin);xs=p.get("data",{}).get("examples",[]);print((xs[0]["id"] if xs else ""))')"
+if [ -n "$EX_ID" ]; then
+  echo "[3c/6] examples readme"
+  json_get "/api/v1/examples/$EX_ID/readme" | assert_ok_json
+  echo "[3d/6] examples run (no reset)"
+  json_post "/api/v1/examples/$EX_ID/run" '{"ns":"'"$NS"'","reset":false}' | assert_ok_json
+fi
 
 echo "[4/6] bitmaps"
 json_get "/api/v1/bitmaps?ns=$NS" | python3 -c '

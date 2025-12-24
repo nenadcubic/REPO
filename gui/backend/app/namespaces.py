@@ -14,6 +14,7 @@ class NamespaceEntry:
     id: str
     label: str
     prefix: str
+    layout: str
 
 
 def _norm_id(v: Any) -> str | None:
@@ -40,7 +41,7 @@ def load_namespaces_from_preset(*, presets_dir: str, preset: str, logger: Any) -
         return {
             "schema": NAMESPACES_SCHEMA_V1,
             "default": "er",
-            "namespaces": [{"id": "er", "label": "Element-Redis", "prefix": "er"}],
+            "namespaces": [{"id": "er", "label": "Element-Redis", "prefix": "er", "layout": "er_layout_v1"}],
             "meta": {"preset": preset, "missing": True},
         }
 
@@ -51,7 +52,7 @@ def load_namespaces_from_preset(*, presets_dir: str, preset: str, logger: Any) -
         return {
             "schema": NAMESPACES_SCHEMA_V1,
             "default": "er",
-            "namespaces": [{"id": "er", "label": "Element-Redis", "prefix": "er"}],
+            "namespaces": [{"id": "er", "label": "Element-Redis", "prefix": "er", "layout": "er_layout_v1"}],
             "meta": {"preset": preset, "path": str(path), "invalid_json": True},
         }
 
@@ -60,12 +61,13 @@ def load_namespaces_from_preset(*, presets_dir: str, preset: str, logger: Any) -
         return {
             "schema": NAMESPACES_SCHEMA_V1,
             "default": "er",
-            "namespaces": [{"id": "er", "label": "Element-Redis", "prefix": "er"}],
+            "namespaces": [{"id": "er", "label": "Element-Redis", "prefix": "er", "layout": "er_layout_v1"}],
             "meta": {"preset": preset, "path": str(path), "invalid_schema": True},
         }
 
     raw_default = _norm_id(doc.get("default")) or "er"
     raw_list = doc.get("namespaces") if isinstance(doc.get("namespaces"), list) else []
+    raw_layouts = doc.get("layouts") if isinstance(doc.get("layouts"), dict) else {}
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -79,11 +81,12 @@ def load_namespaces_from_preset(*, presets_dir: str, preset: str, logger: Any) -
         if not prefix:
             continue
         label = raw.get("label") if isinstance(raw.get("label"), str) else ns_id
-        out.append({"id": ns_id, "label": label, "prefix": prefix})
+        layout = raw.get("layout") if isinstance(raw.get("layout"), str) and raw.get("layout").strip() else "er_layout_v1"
+        out.append({"id": ns_id, "label": label, "prefix": prefix, "layout": layout})
         seen.add(ns_id)
 
     if not out:
-        out = [{"id": "er", "label": "Element-Redis", "prefix": "er"}]
+        out = [{"id": "er", "label": "Element-Redis", "prefix": "er", "layout": "er_layout_v1"}]
         raw_default = "er"
 
     if raw_default not in {x["id"] for x in out}:
@@ -93,6 +96,7 @@ def load_namespaces_from_preset(*, presets_dir: str, preset: str, logger: Any) -
         "schema": NAMESPACES_SCHEMA_V1,
         "default": raw_default,
         "namespaces": out,
+        "layouts": raw_layouts,
         "meta": {"preset": preset, "path": str(path)},
     }
 
@@ -108,8 +112,18 @@ def namespaces_to_map(namespaces_doc: dict[str, Any]) -> tuple[str, dict[str, Na
         if not ns_id or not prefix:
             continue
         label = raw.get("label") if isinstance(raw.get("label"), str) else ns_id
-        out[ns_id] = NamespaceEntry(id=ns_id, label=label, prefix=prefix)
+        layout = raw.get("layout") if isinstance(raw.get("layout"), str) and raw.get("layout").strip() else "er_layout_v1"
+        out[ns_id] = NamespaceEntry(id=ns_id, label=label, prefix=prefix, layout=layout)
     if default_id not in out and out:
         default_id = sorted(out.keys())[0]
     return default_id, out
 
+
+def resolve_layout(namespaces_doc: dict[str, Any], layout_id: str) -> dict[str, Any] | None:
+    layouts = namespaces_doc.get("layouts")
+    if not isinstance(layouts, dict):
+        return None
+    raw = layouts.get(layout_id)
+    if not isinstance(raw, dict):
+        return None
+    return raw

@@ -9,6 +9,7 @@ Scope: User GUI copy (labels, help text, messages)
 - **Elements**
 - **Queries**
 - **Store + TTL**
+- **Examples**
 - **Logs**
 - **Bit-maps**
 
@@ -192,6 +193,28 @@ Scope: User GUI copy (labels, help text, messages)
 
 **Error:**
 > ⚠️ Could not retrieve logs. Check backend status.
+
+---
+
+## 7.2) Examples Panel
+### Section title: `Examples`
+### Description:
+> Load predefined example datasets into Redis (no scripts, no arbitrary execution).
+
+### Fields:
+- `Namespace`
+- `Example`
+- `Reset namespace first (safe delete of canonical keys only)` (checkbox)
+
+### Buttons:
+- `Load into Redis` (primary, seed examples)
+- `Run Import` (primary, dataset compare examples)
+- `Compare` (dataset compare examples)
+- `Refresh list`
+
+### Panels:
+- `README` (rendered markdown)
+- `Result` (monospace summary)
 
 ---
 

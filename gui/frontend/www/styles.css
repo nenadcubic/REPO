@@ -148,6 +148,10 @@ code { color: var(--muted); }
   line-height: 1.35;
 }
 
+#examplesMeta {
+  white-space: pre-wrap;
+}
+
 .table-wrap {
   margin-top: var(--s16);
   overflow: auto;
@@ -364,6 +368,67 @@ code { color: var(--muted); }
   min-height: 84px;
   max-height: 340px;
   white-space: pre-wrap;
+}
+
+.md {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(4, 9, 20, 0.65);
+  overflow: auto;
+  min-height: 84px;
+  max-height: 340px;
+  line-height: 1.45;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin: 0 0 10px 0;
+  font-weight: 800;
+  letter-spacing: 0.15px;
+}
+
+.md p {
+  margin: 0 0 10px 0;
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 10px 0;
+  padding-left: 18px;
+}
+
+.md li {
+  margin: 4px 0;
+}
+
+.md a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.md a:hover {
+  text-decoration: underline;
+}
+
+.md pre {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(7, 14, 30, 0.55);
+  overflow: auto;
+  white-space: pre;
+}
+
+.md code {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
 }
 
 .out.loading {

@@ -1,0 +1,13 @@
+{
+  "id": "northwind",
+  "title": "Northwind (mini)",
+  "namespace": "er",
+  "description": "Mini dataset inspired by /examples/northwind (safe seed; no DB/scripts executed).",
+  "elements": [
+    { "name": "cust:ALFKI", "bits": [0, 10, 20] },
+    { "name": "cust:ANATR", "bits": [0, 11, 21] },
+    { "name": "order:10248", "bits": [1, 10, 30] },
+    { "name": "order:10249", "bits": [1, 11, 31] }
+  ]
+}
+

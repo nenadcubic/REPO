@@ -1,0 +1,13 @@
+{
+  "id": "docs",
+  "title": "Docs (mini)",
+  "namespace": "er",
+  "description": "Mini inverted-index dataset inspired by /examples/docs (safe seed; no scripts executed).",
+  "elements": [
+    { "name": "doc:1", "bits": [10, 11, 12] },
+    { "name": "doc:2", "bits": [11, 13] },
+    { "name": "doc:3", "bits": [12, 14] },
+    { "name": "doc:4", "bits": [10, 14] }
+  ]
+}
+

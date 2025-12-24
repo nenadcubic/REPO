@@ -12,13 +12,13 @@ from fastapi.responses import JSONResponse
 
 from .cli_adapter import er_cli_put, er_cli_query_with_count, er_cli_store_key
 from .errors import ApiError, err, ok
-from .models import PutRequest, QueryRequest, StoreRequest
+from .models import ExamplesRunRequest, PutRequest, QueryRequest, StoreRequest
 from .redis_bits import decode_flags_bin, element_key_with_prefix
 from .settings import load_settings
 from .bitmaps import load_bitmaps_from_preset, save_bitmaps_to_preset
-from .namespaces import load_namespaces_from_preset, namespaces_to_map
+from .namespaces import NamespaceEntry, load_namespaces_from_preset, namespaces_to_map
 from .namespace_discovery import DiscoveryLimits, discover_namespaces, write_namespaces_generated
-from .examples import list_examples, run_example
+from .examples import get_example_readme, list_examples, run_example, run_reports
 
 
 BACKEND_VERSION = "0.1.0"
@@ -65,13 +65,18 @@ def _ensure_store_key_safe(store_key: str, *, prefix: str) -> None:
         raise ApiError("INVALID_STORE_KEY", f"store_key must start with {pfx}:tmp:", status_code=400)
 
 
-def _resolve_ns(ns: str | None) -> tuple[str, str]:
+def _resolve_ns_entry(ns: str | None) -> tuple[str, NamespaceEntry, dict[str, Any]]:
     doc = load_namespaces_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
     default_id, mp = namespaces_to_map(doc)
     ns_id = (ns or "").strip() or default_id
     ent = mp.get(ns_id)
     if not ent:
         raise ApiError("INVALID_INPUT", "unknown namespace", status_code=422, details={"ns": ns_id})
+    return ns_id, ent, doc
+
+
+def _resolve_ns(ns: str | None) -> tuple[str, str]:
+    ns_id, ent, _ = _resolve_ns_entry(ns)
     return ns_id, ent.prefix
 
 
@@ -164,44 +169,62 @@ async def namespaces_discover(
 
 @app.get("/api/v1/examples")
 async def examples() -> dict[str, Any]:
-    ex = [
-        {
-            "id": e.id,
-            "title": e.title,
-            "description": e.description,
-            "ns_hint": e.ns_hint,
-            "element_count_estimate": len(e.elements),
-        }
-        for e in list_examples()
-    ]
+    ex = []
+    for e in list_examples(logger=logger):
+        item: dict[str, Any] = {"id": e.id, "title": e.title, "description": e.description, "type": e.type}
+        if e.type == "seed":
+            item["namespace"] = e.namespace
+            item["element_count_estimate"] = len(e.elements or [])
+        if e.type == "dataset_compare":
+            item["targets"] = e.targets or []
+            item["compare_reports"] = e.compare_reports or []
+            item["reference"] = {"kind": (e.reference or {}).get("kind"), "path": (e.reference or {}).get("path")}
+        ex.append(item)
     return ok({"examples": ex})
 
+@app.get("/api/v1/examples/{id}/readme")
+async def examples_readme(id: str) -> dict[str, Any]:
+    return ok(get_example_readme(example_id=id))
 
-@app.post("/api/v1/examples/run")
-async def examples_run(body: dict[str, Any]) -> dict[str, Any]:
-    ex_id = body.get("id")
-    ns = body.get("ns")
-    reset = body.get("reset", False)
-    if not isinstance(ex_id, str) or not ex_id.strip():
-        raise ApiError("INVALID_INPUT", "id is required", status_code=422)
-    if not isinstance(ns, str) or not ns.strip():
-        raise ApiError("INVALID_INPUT", "ns is required", status_code=422)
-    if not isinstance(reset, bool):
-        raise ApiError("INVALID_INPUT", "reset must be boolean", status_code=422)
 
-    ns_id, prefix = _resolve_ns(ns)
+@app.post("/api/v1/examples/{id}/run")
+async def examples_run(id: str, body: ExamplesRunRequest) -> dict[str, Any]:
+    ns_id, ent, namespaces_doc = _resolve_ns_entry(body.ns)
+    ex = next((x for x in list_examples(logger=logger) if x.id == id), None)
+    if not ex:
+        raise ApiError("INVALID_INPUT", "unknown example id", status_code=422, details={"id": id})
+    if ex.type == "dataset_compare" and ent.layout != "or_layout_v2":
+        raise ApiError("INVALID_INPUT", "example requires OR layout", status_code=422, details={"ns": ns_id, "layout": ent.layout})
+
     r = redis_client()
     data = run_example(
-        example_id=ex_id.strip(),
+        example_id=id,
         ns=ns_id,
-        prefix=prefix,
-        reset=reset,
+        prefix=ent.prefix,
+        layout_id=ent.layout,
+        namespaces_doc=namespaces_doc,
+        reset=bool(body.reset),
         r=r,
         er_cli_path=settings.er_cli_path,
         redis_host=settings.redis_host,
         redis_port=settings.redis_port,
         logger=logger,
     )
+    return ok(data)
+
+
+@app.get("/api/v1/examples/{id}/reports")
+async def examples_reports(id: str, ns: str | None = None) -> dict[str, Any]:
+    if not isinstance(id, str) or not id.strip():
+        raise ApiError("INVALID_INPUT", "id is required", status_code=422)
+    ns_id, ent, namespaces_doc = _resolve_ns_entry(ns)
+    ex = next((x for x in list_examples(logger=logger) if x.id == id), None)
+    if not ex:
+        raise ApiError("INVALID_INPUT", "unknown example id", status_code=422, details={"id": id})
+    if ex.type == "dataset_compare" and ent.layout != "or_layout_v2":
+        raise ApiError("INVALID_INPUT", "example requires OR layout", status_code=422, details={"ns": ns_id, "layout": ent.layout})
+    r = redis_client()
+    data = run_reports(example_id=id, ns=ns_id, prefix=ent.prefix, layout_id=ent.layout, namespaces_doc=namespaces_doc, r=r, logger=logger)
     return ok(data)
 
 

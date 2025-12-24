@@ -1,0 +1,13 @@
+{
+  "id": "northwind_compare",
+  "title": "Northwind: Redis vs SQLite comparison",
+  "type": "dataset_compare",
+  "description": "Import Northwind tables from a local SQLite DB into Redis (OR layout) and compare row counts and order totals.",
+  "reference": { "kind": "sqlite", "path": "examples/northwind_compare/assets/northwind.sqlite" },
+  "targets": [{ "ns": "or", "label": "Redis (or namespace)" }],
+  "compare_reports": [
+    { "id": "row_counts", "title": "Row counts per table" },
+    { "id": "order_totals_sample", "title": "Order totals (sample)" }
+  ]
+}
+

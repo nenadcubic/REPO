@@ -2,6 +2,14 @@
 
 This example ingests a Northwind SQLite DB into Redis using simple Redis `SET` indexes, in a namespaced way (`nw:*`), then compares a few SQL queries with equivalent set operations (union / intersection / difference).
 
+## GUI seed (safe)
+
+The GUI's `Examples` screen can load a small, predefined dataset from `example.json` into Redis under the selected GUI namespace (e.g. `er:*`). No DB access and no scripts are executed.
+
+Suggested checks (GUI):
+- `Elements → Get`: fetch `cust:ALFKI`
+- `Queries → Find`: bit `10` should match `cust:ALFKI` + `order:10248`
+
 ## Files
 
 - `00_get_db.sh` downloads (or instructs you to place) `northwind.sqlite`

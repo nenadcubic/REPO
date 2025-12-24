@@ -74,10 +74,15 @@ You should see a dark-themed web interface with a sidebar:
 - Elements
 - Queries
 - Store + TTL
+- Examples
 - Logs
 - Bit-maps
 
 Use the Namespace selector in the header to switch between allowed Redis prefix families (for example `er:*` vs `or:*`).
+
+Examples:
+- Use `Examples` to load predefined datasets (safe, no script execution).
+- `northwind_compare` imports from a local SQLite DB and compares SQLite vs Redis metrics.
 
 ## 5. Verifying the System (Recommended)
 

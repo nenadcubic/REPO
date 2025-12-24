@@ -61,10 +61,15 @@ Namespace selection:
 ## Examples
 
 - The GUI provides an `Examples` screen that can seed Redis with predefined datasets so the existing `Elements`, `Queries`, and `Matrix` views have known data to display.
-- Examples are a fixed whitelist implemented in backend code (no scripts are executed).
+- Examples are loaded from the repo’s `examples/<id>/example.json` and `examples/<id>/README.md` (no scripts are executed).
 - API:
   - `GET /api/v1/examples`
-  - `POST /api/v1/examples/run` with `{ "id": "...", "ns": "...", "reset": false }`
+  - `GET /api/v1/examples/{id}/readme`
+  - `POST /api/v1/examples/{id}/run` with `{ "ns": "...", "reset": false }`
+  - `GET /api/v1/examples/{id}/reports?ns=...` (dataset compare examples only)
+
+Built-in dataset compare example:
+- `northwind_compare`: imports Northwind from `examples/northwind_compare/assets/northwind.sqlite` into the `or` namespace (OR layout), then compares row counts and sample order totals.
 
 ## Safety defaults
 

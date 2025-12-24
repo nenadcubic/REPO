@@ -2,6 +2,14 @@
 
 Minimal inverted-index example using Redis `SET`s, with a reference evaluator in Python.
 
+## GUI seed (safe)
+
+The GUI's `Examples` screen can load a small, predefined dataset from `example.json` into Redis under the selected GUI namespace (e.g. `er:*`). No scripts are executed.
+
+Suggested checks (GUI):
+- `Elements → Get`: fetch `doc:1`
+- `Queries → Find`: bit `11` should match `doc:1` + `doc:2`
+
 ## Keys (prefix `docs`, configurable via `DOCS_PREFIX`)
 
 Base (no TTL):
@@ -26,4 +34,3 @@ Env:
 - `DOCS_PREFIX` (default `docs`)
 - `DOCS_TTL_SEC` (default `600`)
 - `DOCS_CLEAN_TMP=1` deletes `docs:tmp:*` before compare
-

@@ -1,9 +1,27 @@
 {
   "schema": "er.gui.namespaces.v1",
   "default": "er",
+  "layouts": {
+    "er_layout_v1": {
+      "key_templates": {
+        "universe_key": "{pfx}:all",
+        "element_key": "{pfx}:element:{name}",
+        "bit_index_key": "{pfx}:idx:bit:{bit}",
+        "tmp_key": "{pfx}:tmp:{id}"
+      }
+    },
+    "or_layout_v2": {
+      "key_templates": {
+        "universe_key": "{pfx}:all",
+        "table_set_key": "{pfx}:tbl:{table}",
+        "object_key": "{pfx}:obj:{table}:{id}",
+        "import_registry_key": "{pfx}:import:northwind_compare:objects",
+        "order_details_by_order_key": "{pfx}:idx:OrderDetails:OrderID:{order_id}"
+      }
+    }
+  },
   "namespaces": [
-    { "id": "er", "label": "Element-Redis", "prefix": "er" },
-    { "id": "or", "label": "Oracle-Redis", "prefix": "or" }
+    { "id": "er", "label": "Element-Redis", "prefix": "er", "layout": "er_layout_v1" },
+    { "id": "or", "label": "Oracle-Redis", "prefix": "or", "layout": "or_layout_v2" }
   ]
 }
-

@@ -38,6 +38,7 @@ Use a **left sidebar** with these sections (MVP):
 - Elements
 - Queries
 - Store + TTL
+- Examples
 - Logs (optional, preferred)
 - Bit-maps (preset metadata)
 

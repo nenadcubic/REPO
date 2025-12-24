@@ -37,6 +37,7 @@ const matrixState = {
 
 let nsDiscoverCache = null;
 let examplesCache = null;
+const examplesReadmeCache = new Map(); // id -> markdown string
 
 function disableAllInputs() {
   for (const el of document.querySelectorAll(".content input, .content select, .content textarea")) {
@@ -261,19 +262,19 @@ function setupNav() {
         renderBitmapsTable();
         renderBitmapsGroups();
       }
-      if (el.dataset.view === "examples") {
-        await withRequest({
-          buttonEl: null,
-          outEl: $("examplesOut"),
-          fn: async () => {
-            await fetchExamples({ force: false });
-            renderExamples();
-          },
-        });
-      }
-    });
-  }
-}
+	      if (el.dataset.view === "examples") {
+	        await withRequest({
+	          buttonEl: null,
+	          outEl: $("examplesOut"),
+	          fn: async () => {
+	            await fetchExamples({ force: false });
+	            await renderExamples();
+	          },
+	        });
+	      }
+	    });
+	  }
+	}
 
 function setupTabGroups() {
   for (const el of document.querySelectorAll(".tab[data-tabgroup]")) {
@@ -938,10 +939,213 @@ async function fetchExamples({ force = false } = {}) {
   const out = await apiJson("/api/v1/examples");
   if (!out.ok) return null;
   examplesCache = out.data;
+  if (force) examplesReadmeCache.clear();
   return examplesCache;
 }
 
-function renderExamples() {
+async function fetchExampleReadme(id, { force = false } = {}) {
+  const exId = String(id || "").trim();
+  if (!exId) return null;
+  if (examplesReadmeCache.has(exId) && !force) {
+    return { ok: true, data: { id: exId, readme: examplesReadmeCache.get(exId) } };
+  }
+  const out = await apiJson(`/api/v1/examples/${encodeURIComponent(exId)}/readme`);
+  if (out.ok) {
+    const md = String(out?.data?.readme ?? "");
+    examplesReadmeCache.set(exId, md);
+  }
+  return out;
+}
+
+function envelopeToText(env) {
+  if (!env || typeof env !== "object") return "Invalid response";
+  if (env.ok) return pretty(env);
+  const code = env?.error?.code || "ERROR";
+  const message = env?.error?.message || "Request failed";
+  const details = env?.error?.details || {};
+  return `${code}\n${message}\n\nDetails:\n${pretty(details)}`;
+}
+
+function isSafeHref(href) {
+  const h = String(href || "").trim();
+  if (!h) return false;
+  if (h.startsWith("#") || h.startsWith("/")) return true;
+  return h.startsWith("http://") || h.startsWith("https://");
+}
+
+function renderInlineMd(raw) {
+  const codes = [];
+  const links = [];
+  let s = String(raw || "");
+  s = s.replace(/`([^`]+)`/g, (_, code) => {
+    const idx = codes.length;
+    codes.push(code);
+    return `@@CODE${idx}@@`;
+  });
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
+    const idx = links.length;
+    links.push({ text, url });
+    return `@@LINK${idx}@@`;
+  });
+  s = escapeHtml(s);
+  s = s.replace(/@@LINK(\d+)@@/g, (_, idxStr) => {
+    const idx = Number(idxStr);
+    const ent = links[idx] || { text: "", url: "" };
+    const href = String(ent.url || "").trim();
+    const label = String(ent.text || "").trim() || href;
+    if (!isSafeHref(href)) return escapeHtml(label);
+    return `<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer noopener">${escapeHtml(label)}</a>`;
+  });
+  s = s.replace(/@@CODE(\d+)@@/g, (_, idxStr) => {
+    const idx = Number(idxStr);
+    const code = codes[idx] ?? "";
+    return `<code>${escapeHtml(String(code))}</code>`;
+  });
+  return s;
+}
+
+function renderMarkdown(md) {
+  const src = String(md ?? "").replaceAll("\r\n", "\n");
+  if (!src.trim()) return `<div class="muted">No README available.</div>`;
+
+  const lines = src.split("\n");
+  const out = [];
+  let inFence = false;
+  let fenceLines = [];
+  let para = [];
+  let listItems = [];
+
+  function flushPara() {
+    if (!para.length) return;
+    const text = para.join(" ").trim();
+    if (text) out.push(`<p>${renderInlineMd(text)}</p>`);
+    para = [];
+  }
+
+  function flushList() {
+    if (!listItems.length) return;
+    out.push(`<ul>${listItems.map((t) => `<li>${renderInlineMd(t)}</li>`).join("")}</ul>`);
+    listItems = [];
+  }
+
+  for (const line of lines) {
+    const fence = line.trim().startsWith("```");
+    if (fence) {
+      if (inFence) {
+        out.push(`<pre><code>${escapeHtml(fenceLines.join("\n"))}</code></pre>`);
+        fenceLines = [];
+      } else {
+        flushPara();
+        flushList();
+      }
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      fenceLines.push(line);
+      continue;
+    }
+
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      flushPara();
+      flushList();
+      const level = Math.min(6, h[1].length);
+      const text = (h[2] || "").trim();
+      out.push(`<h${level}>${renderInlineMd(text)}</h${level}>`);
+      continue;
+    }
+
+    const li = line.match(/^\s*[-*]\s+(.*)$/);
+    if (li) {
+      flushPara();
+      listItems.push((li[1] || "").trim());
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushPara();
+      flushList();
+      continue;
+    }
+
+    para.push(line.trim());
+  }
+
+  flushPara();
+  flushList();
+  if (inFence && fenceLines.length) out.push(`<pre><code>${escapeHtml(fenceLines.join("\n"))}</code></pre>`);
+  return out.join("");
+}
+
+function getSelectedExample() {
+  const list = Array.isArray(examplesCache?.examples) ? examplesCache.examples : [];
+  const exSel = $("examplesSelect");
+  const exId = String(exSel?.value || "").trim();
+  if (!list.length) return null;
+  const first = list[0];
+  return list.find((e) => e.id === exId) || first;
+}
+
+function clearExamplesReports() {
+  const rowWrap = $("examplesRowCountsWrap");
+  const totalsWrap = $("examplesTotalsWrap");
+  const rowTbody = $("examplesRowCountsTbody");
+  const totalsTbody = $("examplesTotalsTbody");
+  if (rowWrap) rowWrap.classList.add("hidden");
+  if (totalsWrap) totalsWrap.classList.add("hidden");
+  if (rowTbody) rowTbody.innerHTML = "";
+  if (totalsTbody) totalsTbody.innerHTML = "";
+}
+
+function setExamplesMode(selected) {
+  const runBtn = $("btnExamplesRun");
+  const compareBtn = $("btnExamplesCompare");
+  if (!runBtn || !compareBtn) return;
+  const type = String(selected?.type || "seed");
+  runBtn.textContent = type === "dataset_compare" ? "Run Import" : "Load into Redis";
+  compareBtn.classList.toggle("hidden", type !== "dataset_compare");
+  compareBtn.disabled = type !== "dataset_compare";
+  clearExamplesReports();
+}
+
+async function updateExamplesMetaAndReadme({ forceReadme = false } = {}) {
+  const meta = $("examplesMeta");
+  const readmeEl = $("examplesReadme");
+  const selected = getSelectedExample();
+  if (!meta || !readmeEl) return;
+  if (!selected) {
+    meta.textContent = "";
+    readmeEl.innerHTML = `<div class="muted">No README available.</div>`;
+    return;
+  }
+
+  const type = String(selected.type || "seed");
+  const base =
+    `Active example: ${selected.title} (${selected.id})\n` +
+    `${selected.description}\n` +
+    `Type: ${type}`;
+  if (type === "dataset_compare") {
+    const targetNs = Array.isArray(selected.targets) && selected.targets.length ? String(selected.targets[0]?.ns || "") : "";
+    meta.textContent = `${base}\nTarget namespace: ${targetNs || "n/a"}`;
+  } else {
+    meta.textContent = `${base}\nDefault namespace: ${selected.namespace || "n/a"} • Estimated elements: ${selected.element_count_estimate ?? "n/a"}`;
+  }
+
+  readmeEl.innerHTML = `<div class="muted">Loading README...</div>`;
+  const out = await fetchExampleReadme(selected.id, { force: forceReadme });
+  if (!out) {
+    readmeEl.innerHTML = `<div class="muted">No README available.</div>`;
+    return;
+  }
+  if (!out.ok) {
+    readmeEl.innerHTML = `<pre><code>${escapeHtml(envelopeToText(out))}</code></pre>`;
+    return;
+  }
+  readmeEl.innerHTML = renderMarkdown(out?.data?.readme || "");
+}
+
+async function renderExamples({ forceReadme = false } = {}) {
   const nsSel = $("examplesNs");
   const exSel = $("examplesSelect");
   const outEl = $("examplesOut");
@@ -954,24 +1158,36 @@ function renderExamples() {
   nsSel.value = nsState.selectedId;
 
   const list = Array.isArray(examplesCache?.examples) ? examplesCache.examples : [];
+  const prevId = String(exSel.value || "").trim();
   exSel.innerHTML = list
     .map((e) => `<option value="${escapeHtml(e.id)}">${escapeHtml(`${e.title} (${e.id})`)}</option>`)
     .join("");
+  if (prevId && list.some((e) => e.id === prevId)) exSel.value = prevId;
 
   if (!list.length) {
     outEl.textContent = "No examples available.";
     links.innerHTML = "";
+    const meta = $("examplesMeta");
+    const readmeEl = $("examplesReadme");
+    if (meta) meta.textContent = "";
+    if (readmeEl) readmeEl.innerHTML = `<div class="muted">No README available.</div>`;
     return;
   }
   const first = list[0];
   if (!String(exSel.value || "").trim()) exSel.value = first.id;
-  const selected = list.find((e) => e.id === exSel.value) || first;
-  outEl.textContent =
-    `${selected.title}\n` +
-    `${selected.description}\n\n` +
-    `Estimated elements: ${selected.element_count_estimate ?? "n/a"}\n` +
-    `Namespace hint: ${selected.ns_hint || "n/a"}\n`;
+  const selected = getSelectedExample();
+  if (String(selected?.type || "seed") === "dataset_compare") {
+    outEl.textContent = "Click “Run Import”, then “Compare”.";
+  } else {
+    outEl.textContent = "Click “Load into Redis”.";
+  }
   links.innerHTML = "";
+  setExamplesMode(selected);
+  if (String(selected?.type || "seed") === "dataset_compare") {
+    const targetNs = Array.isArray(selected.targets) && selected.targets.length ? String(selected.targets[0]?.ns || "") : "";
+    if (targetNs && (nsState.options || []).some((o) => o.id === targetNs)) nsSel.value = targetNs;
+  }
+  await updateExamplesMetaAndReadme({ forceReadme });
 }
 
 function renderExamplesRunResult(res) {
@@ -981,16 +1197,37 @@ function renderExamplesRunResult(res) {
   if (!res || !res.ok) {
     renderEnvelope(outEl, res);
     links.innerHTML = "";
+    clearExamplesReports();
     return;
   }
   const d = res.data || {};
+  clearExamplesReports();
+
+  const type = String(d.type || "");
+  if (type === "dataset_compare") {
+    outEl.textContent =
+      `Example: ${d.id}\n` +
+      `Namespace: ${d.ns}\n` +
+      `Imported tables: ${(d.imported_tables || []).length}\n` +
+      `Elapsed: ${d.elapsed_ms ?? "n/a"} ms\n` +
+      (d.reset ? `\nReset:\n- scanned: ${d.reset.scanned}\n- deleted_objects: ${d.reset.deleted_objects}\n` : "");
+    links.innerHTML = "";
+    return;
+  }
+
+  const trunc = d.samples_truncated || {};
+  const truncNote =
+    trunc.created || trunc.updated || trunc.skipped
+      ? "\n\nNote: name lists are samples (truncated to keep the UI responsive)."
+      : "";
   outEl.textContent =
     `Example: ${d.id}\n` +
     `Namespace: ${d.ns}\n` +
     `Created: ${d.counts?.created ?? 0}\n` +
     `Updated: ${d.counts?.updated ?? 0}\n` +
     `Skipped: ${d.counts?.skipped ?? 0}\n` +
-    (d.reset ? `\nReset:\n- scanned: ${d.reset.scanned}\n- deleted: ${d.reset.deleted}\n- skipped: ${d.reset.skipped}\n` : "");
+    (d.reset ? `\nReset:\n- scanned: ${d.reset.scanned}\n- deleted: ${d.reset.deleted}\n- skipped: ${d.reset.skipped}\n` : "") +
+    truncNote;
 
   const names = [...(d.created || []), ...(d.updated || [])].slice(0, 20);
   if (!names.length) {
@@ -1000,6 +1237,52 @@ function renderExamplesRunResult(res) {
   links.innerHTML = names
     .map((n) => `<button class="btn" data-name="${escapeHtml(n)}">Open ${escapeHtml(n)}</button>`)
     .join("");
+}
+
+function renderExamplesReports(res) {
+  const rowWrap = $("examplesRowCountsWrap");
+  const totalsWrap = $("examplesTotalsWrap");
+  const rowTbody = $("examplesRowCountsTbody");
+  const totalsTbody = $("examplesTotalsTbody");
+  if (!rowWrap || !totalsWrap || !rowTbody || !totalsTbody) return;
+
+  clearExamplesReports();
+
+  if (!res || !res.ok) {
+    return;
+  }
+  const d = res.data || {};
+  const reports = d.reports || {};
+
+  const rowCounts = Array.isArray(reports.row_counts) ? reports.row_counts : [];
+  const totals = Array.isArray(reports.order_totals_sample) ? reports.order_totals_sample : [];
+
+  if (rowCounts.length) {
+    rowTbody.innerHTML = rowCounts
+      .map((r) => {
+        const table = escapeHtml(String(r.table ?? ""));
+        const sc = escapeHtml(String(r.sqlite_count ?? ""));
+        const rc = escapeHtml(String(r.redis_count ?? ""));
+        const match = !!r.match;
+        const m = match ? "OK" : "Mismatch";
+        return `<tr><td><code>${table}</code></td><td>${sc}</td><td>${rc}</td><td>${m}</td></tr>`;
+      })
+      .join("");
+    rowWrap.classList.remove("hidden");
+  }
+
+  if (totals.length) {
+    totalsTbody.innerHTML = totals
+      .map((r) => {
+        const oid = escapeHtml(String(r.order_id ?? ""));
+        const st = escapeHtml(String(r.sqlite_total ?? ""));
+        const rt = escapeHtml(String(r.redis_total ?? ""));
+        const diff = escapeHtml(String(r.diff ?? ""));
+        return `<tr><td><code>${oid}</code></td><td>${st}</td><td>${rt}</td><td>${diff}</td></tr>`;
+      })
+      .join("");
+    totalsWrap.classList.remove("hidden");
+  }
 }
 
 async function loadNamespaces() {
@@ -1484,23 +1767,61 @@ function setupActions() {
     });
   });
 
-  $("btnExamplesRefresh").addEventListener("click", async () => {
-    if (state.locked) return;
-    await withRequest({
-      buttonEl: $("btnExamplesRefresh"),
-      outEl: $("examplesOut"),
-      fn: async () => {
-        await fetchExamples({ force: true });
-        renderExamples();
-      },
-    });
-  });
+	  $("btnExamplesRefresh").addEventListener("click", async () => {
+	    if (state.locked) return;
+	    await withRequest({
+	      buttonEl: $("btnExamplesRefresh"),
+	      outEl: $("examplesOut"),
+	      fn: async () => {
+	        await fetchExamples({ force: true });
+	        await renderExamples({ forceReadme: true });
+	      },
+	    });
+	  });
 
-  $("btnExamplesRun").addEventListener("click", async () => {
-    if (state.locked) return;
-    const id = String($("examplesSelect")?.value || "").trim();
-    const ns = String($("examplesNs")?.value || "").trim() || selectedNsId();
-    const reset = !!$("examplesReset")?.checked;
+	  $("examplesSelect").addEventListener("change", async () => {
+	    if (state.locked) return;
+	    setExamplesMode(getSelectedExample());
+	    clearExamplesReports();
+	    await updateExamplesMetaAndReadme({ forceReadme: false });
+	  });
+
+	  $("btnExamplesCompare").addEventListener("click", async () => {
+	    if (state.locked) return;
+	    const selected = getSelectedExample();
+	    if (String(selected?.type || "") !== "dataset_compare") return;
+	    const id = String($("examplesSelect")?.value || "").trim();
+	    const ns = String($("examplesNs")?.value || "").trim() || selectedNsId();
+	    if (!id || !ns) {
+	      const msg = "This field is required.";
+	      state.error = { type: "validation", message: msg };
+	      showBanner("error", msg);
+	      return;
+	    }
+	    await withRequest({
+	      buttonEl: $("btnExamplesCompare"),
+	      outEl: $("examplesOut"),
+	      fn: async () => {
+	        const out = await apiJson(`/api/v1/examples/${encodeURIComponent(id)}/reports?ns=${encodeURIComponent(ns)}`);
+	        if (!out.ok) {
+	          state.error = { type: "request", message: out?.error?.message || "Request failed" };
+	          showBanner("error", out?.error?.message || "Request failed");
+	          renderEnvelope($("examplesOut"), out);
+	          clearExamplesReports();
+	          return;
+	        }
+	        state.error = null;
+	        showBanner("success", "Compare completed");
+	        renderExamplesReports(out);
+	      },
+	    });
+	  });
+
+	  $("btnExamplesRun").addEventListener("click", async () => {
+	    if (state.locked) return;
+	    const id = String($("examplesSelect")?.value || "").trim();
+	    const ns = String($("examplesNs")?.value || "").trim() || selectedNsId();
+	    const reset = !!$("examplesReset")?.checked;
     if (!id || !ns) {
       const msg = "This field is required.";
       state.error = { type: "validation", message: msg };
@@ -1508,23 +1829,27 @@ function setupActions() {
       return;
     }
 
-    await withRequest({
-      buttonEl: $("btnExamplesRun"),
-      outEl: $("examplesOut"),
-      fn: async () => {
-        const out = await apiJson("/api/v1/examples/run", { method: "POST", body: JSON.stringify({ id, ns, reset }) });
-        if (!out.ok) {
-          state.error = { type: "request", message: out?.error?.message || "Request failed" };
-          showBanner("error", out?.error?.message || "Request failed");
-          renderExamplesRunResult(out);
-          return;
-        }
-        state.error = null;
-        showBanner("success", "✅ Loaded example into Redis.");
-        renderExamplesRunResult(out);
-      },
-    });
-  });
+	    await withRequest({
+	      buttonEl: $("btnExamplesRun"),
+	      outEl: $("examplesOut"),
+	      fn: async () => {
+	        const out = await apiJson(`/api/v1/examples/${encodeURIComponent(id)}/run`, {
+	          method: "POST",
+	          body: JSON.stringify({ ns, reset }),
+	        });
+	        if (!out.ok) {
+	          state.error = { type: "request", message: out?.error?.message || "Request failed" };
+	          showBanner("error", out?.error?.message || "Request failed");
+	          renderExamplesRunResult(out);
+	          return;
+	        }
+	        state.error = null;
+	        const t = String(out?.data?.type || "");
+	        showBanner("success", t === "dataset_compare" ? "✅ Import completed." : "✅ Loaded example into Redis.");
+	        renderExamplesRunResult(out);
+	      },
+	    });
+	  });
 
   $("examplesLinks").addEventListener("click", (ev) => {
     if (state.locked) return;
@@ -1717,20 +2042,20 @@ setupActions();
 setupErrorResetOnInput();
 setActiveView("status");
 
-async function init() {
-  await loadNamespaces();
-  await loadConfig();
-  await fetchExamples({ force: false });
-  await fetchBitmaps({ silent: true });
+	async function init() {
+	  await loadNamespaces();
+	  await loadConfig();
+	  await fetchExamples({ force: false });
+	  await fetchBitmaps({ silent: true });
   renderBitmapsGroups();
   setBitmapsEditMode(!!$("bitmapsEditMode")?.checked);
-  await refreshHealth();
-  renderNsDiscover();
-  renderExamples();
-  const search = $("bitmapsSearch");
-  if (search) search.addEventListener("input", () => renderBitmapsTable());
-  setupMatrixHover();
-  drawMatrix();
-}
+	  await refreshHealth();
+	  renderNsDiscover();
+	  await renderExamples();
+	  const search = $("bitmapsSearch");
+	  if (search) search.addEventListener("input", () => renderBitmapsTable());
+	  setupMatrixHover();
+	  drawMatrix();
+	}
 
 init();

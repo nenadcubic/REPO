@@ -136,9 +136,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExamplesListResponse"
-  /api/v1/examples/run:
+  /api/v1/examples/{id}/readme:
+    get:
+      operationId: examplesReadme
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Markdown README for an example
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExamplesReadmeResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/examples/{id}/run:
     post:
       operationId: examplesRun
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -152,6 +186,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExamplesRunResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/examples/{id}/reports:
+    get:
+      operationId: examplesReports
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: ns
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Comparison reports for a dataset_compare example
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExamplesReportsResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: Validation error
           content:
@@ -900,6 +967,9 @@ components:
           type: string
         prefix:
           type: string
+        layout:
+          type: string
+          nullable: true
     NamespacesDiscoverResponse:
       type: object
       required: [ok, data]
@@ -958,7 +1028,7 @@ components:
                 $ref: "#/components/schemas/ExampleInfo"
     ExampleInfo:
       type: object
-      required: [id, title, description, ns_hint, element_count_estimate]
+      required: [id, title, description, type]
       properties:
         id:
           type: string
@@ -966,16 +1036,45 @@ components:
           type: string
         description:
           type: string
-        ns_hint:
+        type:
           type: string
+        namespace:
+          type: string
+          nullable: true
         element_count_estimate:
           type: integer
+          nullable: true
+        reference:
+          type: object
+          additionalProperties: true
+        targets:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        compare_reports:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    ExamplesReadmeResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [id, readme]
+          properties:
+            id:
+              type: string
+            readme:
+              type: string
     ExamplesRunRequest:
       type: object
-      required: [id, ns, reset]
+      required: [ns]
       properties:
-        id:
-          type: string
         ns:
           type: string
         reset:
@@ -988,11 +1087,25 @@ components:
           const: true
         data:
           type: object
-          required: [id, ns, created, updated, skipped, counts]
+          required: [id, type, ns]
           properties:
             id:
               type: string
+            type:
+              type: string
             ns:
+              type: string
+            table_counts:
+              type: object
+              additionalProperties:
+                type: integer
+            imported_tables:
+              type: array
+              items:
+                type: string
+            elapsed_ms:
+              type: integer
+            rounding:
               type: string
             created:
               type: array
@@ -1016,6 +1129,63 @@ components:
                   type: integer
                 skipped:
                   type: integer
+            samples_truncated:
+              type: object
+              additionalProperties: true
             reset:
               type: object
               additionalProperties: true
+    ExamplesReportsResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [id, type, ns, reports]
+          properties:
+            id:
+              type: string
+            type:
+              type: string
+            ns:
+              type: string
+            rounding:
+              type: string
+            reports:
+              type: object
+              required: [row_counts, order_totals_sample]
+              properties:
+                row_counts:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/RowCountReportItem"
+                order_totals_sample:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/OrderTotalReportItem"
+    RowCountReportItem:
+      type: object
+      required: [table, sqlite_count, redis_count, match]
+      properties:
+        table:
+          type: string
+        sqlite_count:
+          type: integer
+        redis_count:
+          type: integer
+        match:
+          type: boolean
+    OrderTotalReportItem:
+      type: object
+      required: [order_id, sqlite_total, redis_total, diff]
+      properties:
+        order_id:
+          type: string
+        sqlite_total:
+          type: string
+        redis_total:
+          type: string
+        diff:
+          type: string

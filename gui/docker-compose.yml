@@ -29,6 +29,7 @@ services:
       - ER_GUI_STORE_PREVIEW_LIMIT=${ER_GUI_STORE_PREVIEW_LIMIT:-25}
     volumes:
       - ./presets:/app/presets
+      - ../examples:/app/examples:ro
       - er_gui_backend_logs:/app/logs
     ports:
       - "${GUI_API_PORT:-18000}:8000"

@@ -2,6 +2,15 @@
 
 Minimal “universe + indexes + set algebra” demo using integers and Redis `SET`s, with a Python reference evaluator.
 
+## GUI seed (safe)
+
+The GUI's `Examples` screen can load a small, predefined dataset from `example.json` into Redis under the selected GUI namespace (e.g. `er:*`). No scripts are executed.
+
+Suggested checks (GUI):
+- `Elements → Get`: fetch `U`, `A`, `B`, `C`
+- `Queries → Find`: bit `2` should match `U` + `A` + `B`
+- `Queries → Find NOT`: include bit `3`, exclude bit `5` should match `B` (from `B = {1,2,3}`, `C = {3,5}`)
+
 ## Keys (prefix `mu`, configurable via `MU_PREFIX`)
 
 Base (no TTL):
@@ -27,4 +36,3 @@ Env:
 - `MU_TTL_SEC` (default `600`)
 - `MU_MAX_N` (default `100`)
 - `MU_CLEAN_TMP=1` deletes `mu:tmp:*` before compare
-
