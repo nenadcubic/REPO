@@ -171,6 +171,14 @@ code { color: var(--muted); }
   background: rgba(109, 167, 255, 0.06);
 }
 
+.table tr.clickable td {
+  cursor: pointer;
+}
+
+.table tr.selected td {
+  background: rgba(109, 167, 255, 0.10);
+}
+
 .matrix-wrap {
   margin-top: var(--s16);
   position: relative;

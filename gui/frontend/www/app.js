@@ -15,6 +15,13 @@ const state = {
 };
 
 let bitmapsCache = null; // { meta, items, byBit: Map<number, item> }
+let bitmapsDoc = null; // raw document for editing (bitmaps.json)
+
+const bitmapsUi = {
+  editMode: false,
+  selectedBit: null,
+  editingGroupOldId: null,
+};
 
 const matrixState = {
   bitSet: null, // Set<number>
@@ -220,6 +227,7 @@ function setupNav() {
       if (el.dataset.view === "bitmaps") {
         await fetchBitmaps();
         renderBitmapsTable();
+        renderBitmapsGroups();
       }
     });
   }
@@ -244,13 +252,7 @@ async function fetchBitmaps({ force = false, silent = false } = {}) {
     }
     return null;
   }
-  const byBit = new Map();
-  const items = Array.isArray(res.data.items) ? res.data.items : [];
-  for (const it of items) {
-    const bit = Number(it.bit);
-    if (Number.isInteger(bit)) byBit.set(bit, it);
-  }
-  bitmapsCache = { meta: res.data.meta || {}, items, byBit, raw: res.data };
+  applyBitmapsResponse(res);
   return bitmapsCache;
 }
 
@@ -259,6 +261,148 @@ function bitNameFor(bit) {
   const name = entry?.name;
   if (typeof name === "string" && name.trim()) return name.trim();
   return `Bit ${bit}`;
+}
+
+function applyBitmapsResponse(res) {
+  const byBit = new Map();
+  const items = Array.isArray(res?.data?.items) ? res.data.items : [];
+  for (const it of items) {
+    const bit = Number(it.bit);
+    if (Number.isInteger(bit)) byBit.set(bit, it);
+  }
+  bitmapsCache = { meta: res?.data?.meta || {}, items, byBit, raw: res?.data || {} };
+
+  const doc = res?.data?.document;
+  if (doc && typeof doc === "object") {
+    bitmapsDoc = doc;
+  } else {
+    bitmapsDoc = { schema: "er.gui.bitmaps.v1", meta: {}, groups: {}, labels: {}, defaults: {}, items: [], ranges: [] };
+  }
+}
+
+function getGroupsSorted() {
+  const groups = bitmapsDoc?.groups && typeof bitmapsDoc.groups === "object" ? bitmapsDoc.groups : {};
+  const out = Object.entries(groups)
+    .filter(([id, g]) => typeof id === "string" && id.trim() && g && typeof g === "object")
+    .map(([id, g]) => ({
+      id: id.trim(),
+      label: typeof g.label === "string" ? g.label : "",
+      order: Number.isFinite(Number(g.order)) ? Number(g.order) : 0,
+      color: typeof g.color === "string" ? g.color : "",
+    }));
+  out.sort((a, b) => (a.order || 0) - (b.order || 0) || a.id.localeCompare(b.id));
+  return out;
+}
+
+function groupExists(id) {
+  if (!id || typeof id !== "string") return false;
+  const groups = bitmapsDoc?.groups && typeof bitmapsDoc.groups === "object" ? bitmapsDoc.groups : {};
+  return Object.prototype.hasOwnProperty.call(groups, id);
+}
+
+function firstGroupId() {
+  const gs = getGroupsSorted();
+  return gs.length ? gs[0].id : "";
+}
+
+function getDefaultGroupId() {
+  const g = bitmapsDoc?.defaults?.group;
+  if (typeof g === "string" && g && groupExists(g)) return g;
+  return firstGroupId();
+}
+
+function populateGroupSelect(selectEl, { value = "", includeEmpty = false } = {}) {
+  if (!selectEl) return;
+  const gs = getGroupsSorted();
+  const opts = [];
+  if (includeEmpty) opts.push(`<option value=""></option>`);
+  for (const g of gs) {
+    const label = g.label ? `${g.label} (${g.id})` : g.id;
+    opts.push(`<option value="${escapeHtml(g.id)}">${escapeHtml(label)}</option>`);
+  }
+  selectEl.innerHTML = opts.join("");
+  const v = value && groupExists(value) ? value : getDefaultGroupId();
+  if (v) selectEl.value = v;
+}
+
+function setBitmapsEditMode(on) {
+  bitmapsUi.editMode = !!on;
+  $("bitmapsEditOnly")?.classList.toggle("hidden", !bitmapsUi.editMode);
+  if (!bitmapsUi.editMode) {
+    bitmapsUi.selectedBit = null;
+    $("bitmapsItemPanel")?.classList.add("hidden");
+  }
+  renderBitmapsTable();
+  renderBitmapsGroups();
+}
+
+function openBitmapsItemEditor(bit) {
+  if (!bitmapsUi.editMode) return;
+  if (!Number.isInteger(bit) || bit < 0 || bit > 4095) return;
+  if (!bitmapsDoc) return;
+
+  bitmapsUi.selectedBit = bit;
+  const panel = $("bitmapsItemPanel");
+  if (panel) panel.classList.remove("hidden");
+
+  $("bmEditBit").value = String(bit);
+  populateGroupSelect($("bmEditGroup"), { value: "" });
+
+  const explicit = Array.isArray(bitmapsDoc.items) ? bitmapsDoc.items.find((it) => Number(it?.bit) === bit) : null;
+  const resolved = bitmapsCache?.byBit?.get(bit) || null;
+  const src = explicit || resolved || {};
+
+  $("bmEditName").value = typeof src.name === "string" ? src.name : "";
+  $("bmEditKey").value = typeof src.key === "string" ? src.key : "";
+  $("bmEditDesc").value = typeof src.description === "string" ? src.description : "";
+
+  const desiredGroup = typeof src.group === "string" ? src.group : "";
+  populateGroupSelect($("bmEditGroup"), { value: desiredGroup });
+}
+
+function closeBitmapsItemEditor() {
+  bitmapsUi.selectedBit = null;
+  $("bitmapsItemPanel")?.classList.add("hidden");
+  $("bmEditBit").value = "";
+  $("bmEditName").value = "";
+  $("bmEditKey").value = "";
+  $("bmEditDesc").value = "";
+  renderBitmapsTable();
+}
+
+function upsertDocItem(bit, patch) {
+  if (!bitmapsDoc) return;
+  if (!Array.isArray(bitmapsDoc.items)) bitmapsDoc.items = [];
+  const idx = bitmapsDoc.items.findIndex((it) => Number(it?.bit) === bit);
+  const next = { bit, ...(idx >= 0 ? bitmapsDoc.items[idx] : {}), ...patch };
+  if (!next.name) delete next.name;
+  if (!next.key) delete next.key;
+  if (!next.description) delete next.description;
+  if (!next.group) delete next.group;
+  if (idx >= 0) bitmapsDoc.items[idx] = next;
+  else bitmapsDoc.items.push(next);
+}
+
+async function putBitmapsDoc({ buttonEl, outEl }) {
+  if (!bitmapsDoc) throw new Error("No bit-maps document loaded.");
+  await withRequest({
+    buttonEl,
+    outEl,
+    fn: async () => {
+      const out = await apiJson("/api/v1/bitmaps", { method: "PUT", body: JSON.stringify(bitmapsDoc) });
+      if (!out.ok) {
+        const msg = out?.error?.message || "Request failed";
+        state.error = { type: "request", message: msg };
+        showBanner("error", msg);
+        return;
+      }
+      state.error = null;
+      applyBitmapsResponse(out);
+      showBanner("success", "Saved");
+      renderBitmapsGroups();
+      renderBitmapsTable();
+    },
+  });
 }
 
 function hideMatrixTooltip() {
@@ -382,9 +526,286 @@ function renderBitmapsTable() {
       const name = it.name ? escapeHtml(String(it.name)) : "";
       const group = it.group ? escapeHtml(String(it.group)) : "";
       const desc = it.description ? escapeHtml(String(it.description)) : "";
-      return `<tr><td>${bit}</td><td>${key}</td><td>${name}</td><td>${group}</td><td>${desc}</td></tr>`;
+      const clickable = bitmapsUi.editMode ? "clickable" : "";
+      const selected = bitmapsUi.editMode && bitmapsUi.selectedBit === bit ? "selected" : "";
+      return `<tr class="${clickable} ${selected}" data-bit="${bit}"><td>${bit}</td><td>${key}</td><td>${name}</td><td>${group}</td><td>${desc}</td></tr>`;
     })
     .join("");
+}
+
+function renderBitmapsGroups() {
+  const groupsTbody = $("bmGroupsTbody");
+  const defaultSel = $("bmDefaultGroup");
+  const itemGroupSel = $("bmEditGroup");
+  if (!groupsTbody || !defaultSel || !itemGroupSel) return;
+
+  populateGroupSelect(defaultSel, { value: getDefaultGroupId(), includeEmpty: false });
+  populateGroupSelect(itemGroupSel, { value: itemGroupSel.value || getDefaultGroupId(), includeEmpty: false });
+
+  const gs = getGroupsSorted();
+  if (!gs.length) {
+    groupsTbody.innerHTML = `<tr><td colspan="5" class="muted">No groups defined.</td></tr>`;
+    return;
+  }
+
+  groupsTbody.innerHTML = gs
+    .map((g) => {
+      const id = escapeHtml(g.id);
+      const label = escapeHtml(g.label || "");
+      const order = Number.isFinite(g.order) ? String(g.order) : "";
+      const color = escapeHtml(g.color || "");
+      return (
+        `<tr data-group="${id}">` +
+        `<td><code>${id}</code></td>` +
+        `<td>${label}</td>` +
+        `<td>${order}</td>` +
+        `<td>${color}</td>` +
+        `<td>` +
+        `<button class="btn" data-action="edit">Edit</button> ` +
+        `<button class="btn danger" data-action="delete">Delete</button>` +
+        `</td>` +
+        `</tr>`
+      );
+    })
+    .join("");
+}
+
+function resetGroupForm() {
+  bitmapsUi.editingGroupOldId = null;
+  $("bmGroupId").value = "";
+  $("bmGroupLabel").value = "";
+  $("bmGroupOrder").value = "";
+  $("bmGroupColor").value = "";
+}
+
+function readGroupForm() {
+  const id = String($("bmGroupId").value || "").trim();
+  const label = String($("bmGroupLabel").value || "").trim();
+  const order = normalizeInt($("bmGroupOrder").value, "Order");
+  const color = String($("bmGroupColor").value || "").trim();
+  if (!id) throw new Error("This field is required.");
+  if (!/^[A-Za-z0-9_.-]+$/.test(id)) throw new Error("Invalid value.");
+  if (!label) throw new Error("This field is required.");
+  return { id, label, order, color };
+}
+
+async function saveDefaultGroup() {
+  if (!bitmapsDoc) return;
+  const next = String($("bmDefaultGroup").value || "").trim();
+  if (!next || !groupExists(next)) {
+    const msg = "Invalid value.";
+    state.error = { type: "validation", message: msg };
+    showBanner("error", msg);
+    return;
+  }
+  if (!bitmapsDoc.defaults || typeof bitmapsDoc.defaults !== "object") bitmapsDoc.defaults = {};
+  bitmapsDoc.defaults.group = next;
+  await putBitmapsDoc({ buttonEl: $("btnBmDefaultGroupSave"), outEl: $("bitmapsMeta") });
+}
+
+function renameGroupRefs(oldId, newId) {
+  if (!bitmapsDoc) return;
+  if (bitmapsDoc.defaults?.group === oldId) bitmapsDoc.defaults.group = newId;
+  if (Array.isArray(bitmapsDoc.items)) {
+    for (const it of bitmapsDoc.items) {
+      if (it && typeof it === "object" && it.group === oldId) it.group = newId;
+    }
+  }
+  if (Array.isArray(bitmapsDoc.ranges)) {
+    for (const r of bitmapsDoc.ranges) {
+      if (r && typeof r === "object" && r.group === oldId) r.group = newId;
+    }
+  }
+}
+
+async function saveGroupFromForm() {
+  if (!bitmapsDoc) return;
+  const { id, label, order, color } = readGroupForm();
+
+  if (!bitmapsDoc.groups || typeof bitmapsDoc.groups !== "object") bitmapsDoc.groups = {};
+
+  const oldId = bitmapsUi.editingGroupOldId;
+  if (oldId && oldId !== id) {
+    if (groupExists(id)) throw new Error("Invalid value.");
+    const g = bitmapsDoc.groups[oldId];
+    delete bitmapsDoc.groups[oldId];
+    bitmapsDoc.groups[id] = g;
+    renameGroupRefs(oldId, id);
+  }
+
+  bitmapsDoc.groups[id] = { label, order, ...(color ? { color } : {}) };
+  if (!bitmapsDoc.defaults || typeof bitmapsDoc.defaults !== "object") bitmapsDoc.defaults = {};
+  if (!bitmapsDoc.defaults.group || !groupExists(bitmapsDoc.defaults.group)) bitmapsDoc.defaults.group = id;
+
+  await putBitmapsDoc({ buttonEl: $("btnBmGroupSave"), outEl: $("bitmapsMeta") });
+  resetGroupForm();
+}
+
+async function deleteGroupById(id) {
+  if (!bitmapsDoc) return;
+  if (!id || !groupExists(id)) return;
+
+  const okDel = window.confirm(`Delete group "${id}"?`);
+  if (!okDel) return;
+
+  const groups = bitmapsDoc.groups || {};
+  const remainingKeys = Object.keys(groups).filter((k) => k !== id);
+  const hasItems = Array.isArray(bitmapsDoc.items) && bitmapsDoc.items.length > 0;
+  const hasRanges = Array.isArray(bitmapsDoc.ranges) && bitmapsDoc.ranges.length > 0;
+  if (remainingKeys.length === 0 && (hasItems || hasRanges)) {
+    const msg = "Invalid value.";
+    state.error = { type: "validation", message: msg };
+    showBanner("error", msg);
+    return;
+  }
+
+  delete groups[id];
+
+  const defaultId = getDefaultGroupId();
+  const nextDefault = groupExists(defaultId) ? defaultId : firstGroupId();
+  if (!bitmapsDoc.defaults || typeof bitmapsDoc.defaults !== "object") bitmapsDoc.defaults = {};
+  bitmapsDoc.defaults.group = nextDefault || "";
+
+  const reassign = nextDefault || "";
+  if (Array.isArray(bitmapsDoc.items)) {
+    for (const it of bitmapsDoc.items) {
+      if (it && typeof it === "object" && it.group === id) it.group = reassign;
+    }
+  }
+  if (Array.isArray(bitmapsDoc.ranges)) {
+    for (const r of bitmapsDoc.ranges) {
+      if (r && typeof r === "object" && r.group === id) r.group = reassign;
+    }
+  }
+
+  await putBitmapsDoc({ buttonEl: null, outEl: $("bitmapsMeta") });
+  resetGroupForm();
+}
+
+function parseBulkAssign(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const assignments = new Map(); // bit -> groupId
+  const duplicates = [];
+  const invalidTokens = [];
+  const invalidGroups = [];
+
+  for (const line of lines) {
+    const idx = line.indexOf(":");
+    if (idx <= 0) {
+      invalidTokens.push(line);
+      continue;
+    }
+    const group = line.slice(0, idx).trim();
+    const rhs = line.slice(idx + 1).trim();
+    if (!group || !groupExists(group)) {
+      invalidGroups.push(group || line);
+      continue;
+    }
+    if (!rhs) continue;
+
+    const tokens = rhs.split(/[\s,]+/).filter(Boolean);
+    for (const tok of tokens) {
+      const m = tok.match(/^(\d+)(?:-|\.\.)(\d+)$/);
+      if (m) {
+        const a = Number(m[1]);
+        const b = Number(m[2]);
+        if (!Number.isInteger(a) || !Number.isInteger(b)) {
+          invalidTokens.push(tok);
+          continue;
+        }
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        for (let bit = lo; bit <= hi; bit++) {
+          if (bit < 0 || bit > 4095) {
+            invalidTokens.push(String(bit));
+            continue;
+          }
+          if (assignments.has(bit)) duplicates.push(bit);
+          else assignments.set(bit, group);
+        }
+        continue;
+      }
+
+      if (!/^\d+$/.test(tok)) {
+        invalidTokens.push(tok);
+        continue;
+      }
+      const bit = Number(tok);
+      if (!Number.isInteger(bit) || bit < 0 || bit > 4095) {
+        invalidTokens.push(tok);
+        continue;
+      }
+      if (assignments.has(bit)) duplicates.push(bit);
+      else assignments.set(bit, group);
+    }
+  }
+
+  return { assignments, duplicates, invalidTokens, invalidGroups };
+}
+
+function writeBulkSummary(summary) {
+  const outEl = $("bmBulkOut");
+  if (!outEl) return;
+  outEl.textContent = summary;
+}
+
+async function applyBulkAssign() {
+  if (!bitmapsDoc) return;
+  const { assignments, duplicates, invalidTokens, invalidGroups } = parseBulkAssign($("bmBulkText").value || "");
+  const autoname = !!$("bmBulkAutoname").checked;
+
+  if (invalidGroups.length || invalidTokens.length) {
+    const msg = "Invalid value. See Summary.";
+    state.error = { type: "validation", message: msg };
+    showBanner("error", msg);
+  }
+
+  const items = Array.isArray(bitmapsDoc.items) ? bitmapsDoc.items : [];
+  const explicitByBit = new Map(items.map((it) => [Number(it.bit), it]));
+  let created = 0;
+  let updated = 0;
+
+  const prefix = typeof bitmapsDoc.labels?.UNNAMED_PREFIX === "string" && bitmapsDoc.labels.UNNAMED_PREFIX.trim()
+    ? bitmapsDoc.labels.UNNAMED_PREFIX.trim()
+    : "Bit";
+
+  for (const [bit, group] of assignments.entries()) {
+    const existing = explicitByBit.get(bit);
+    if (existing) {
+      if (existing.group !== group) {
+        existing.group = group;
+        updated++;
+      }
+      continue;
+    }
+    const next = { bit, group };
+    if (autoname) next.name = `${prefix} ${bit}`;
+    items.push(next);
+    created++;
+  }
+  bitmapsDoc.items = items;
+
+  writeBulkSummary(
+    [
+      `Applied: ${assignments.size}`,
+      `Created: ${created}`,
+      `Updated: ${updated}`,
+      `Duplicates ignored: ${duplicates.length}`,
+      `Invalid groups: ${invalidGroups.length}`,
+      `Invalid tokens: ${invalidTokens.length}`,
+      invalidGroups.length ? `\nInvalid groups:\n${invalidGroups.slice(0, 50).join("\n")}` : "",
+      invalidTokens.length ? `\nInvalid tokens:\n${invalidTokens.slice(0, 50).join("\n")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+
+  if (!assignments.size) return;
+  await putBitmapsDoc({ buttonEl: $("btnBmBulkApply"), outEl: $("bmBulkOut") });
 }
 
 function escapeHtml(s) {
@@ -805,8 +1226,101 @@ function setupActions() {
       fn: async () => {
         await fetchBitmaps({ force: true });
         renderBitmapsTable();
+        renderBitmapsGroups();
       },
     });
+  });
+
+  $("bitmapsEditMode").addEventListener("change", () => {
+    setBitmapsEditMode(!!$("bitmapsEditMode").checked);
+  });
+
+  $("bitmapsTbody").addEventListener("click", (ev) => {
+    if (state.locked) return;
+    if (!bitmapsUi.editMode) return;
+    const tr = ev.target.closest("tr");
+    const bit = Number(tr?.dataset?.bit);
+    if (!Number.isInteger(bit)) return;
+    openBitmapsItemEditor(bit);
+    renderBitmapsTable();
+  });
+
+  $("btnBmItemCancel").addEventListener("click", () => {
+    if (state.locked) return;
+    closeBitmapsItemEditor();
+  });
+
+  $("btnBmItemSave").addEventListener("click", async () => {
+    if (state.locked) return;
+    let bit;
+    let group;
+    try {
+      bit = normalizeInt($("bmEditBit").value, "Bit");
+      if (bit < 0 || bit > 4095) throw new Error("Must be between 0 and 4095.");
+      group = String($("bmEditGroup").value || "").trim();
+      if (!group || !groupExists(group)) throw new Error("Invalid value.");
+    } catch (e) {
+      const msg = String(e);
+      state.error = { type: "validation", message: msg };
+      showBanner("error", msg);
+      return;
+    }
+
+    const name = String($("bmEditName").value || "").trim();
+    const key = String($("bmEditKey").value || "").trim();
+    const description = String($("bmEditDesc").value || "").trim();
+    upsertDocItem(bit, { group, name, key, description });
+    await putBitmapsDoc({ buttonEl: $("btnBmItemSave"), outEl: $("bitmapsMeta") });
+  });
+
+  $("btnBmDefaultGroupSave").addEventListener("click", async () => {
+    if (state.locked) return;
+    await saveDefaultGroup();
+  });
+
+  $("btnBmGroupCancel").addEventListener("click", () => {
+    if (state.locked) return;
+    resetGroupForm();
+  });
+
+  $("btnBmGroupSave").addEventListener("click", async () => {
+    if (state.locked) return;
+    try {
+      await saveGroupFromForm();
+    } catch (e) {
+      const msg = String(e);
+      state.error = { type: "validation", message: msg };
+      showBanner("error", msg);
+    }
+  });
+
+  $("bmGroupsTbody").addEventListener("click", async (ev) => {
+    if (state.locked) return;
+    const btn = ev.target.closest("button");
+    const tr = ev.target.closest("tr");
+    const action = btn?.dataset?.action;
+    const id = tr?.dataset?.group;
+    if (!action || !id) return;
+
+    if (action === "edit") {
+      const g = bitmapsDoc?.groups?.[id];
+      if (!g) return;
+      bitmapsUi.editingGroupOldId = id;
+      $("bmGroupId").value = id;
+      $("bmGroupLabel").value = typeof g.label === "string" ? g.label : "";
+      $("bmGroupOrder").value = String(g.order ?? "");
+      $("bmGroupColor").value = typeof g.color === "string" ? g.color : "";
+      return;
+    }
+
+    if (action === "delete") {
+      await deleteGroupById(id);
+    }
+  });
+
+  $("btnBmBulkApply").addEventListener("click", async () => {
+    if (state.locked) return;
+    await applyBulkAssign();
   });
 
   $("btnMatrixFetch").addEventListener("click", async () => {
@@ -875,6 +1389,8 @@ setActiveView("status");
 async function init() {
   await loadConfig();
   await fetchBitmaps({ silent: true });
+  renderBitmapsGroups();
+  setBitmapsEditMode(!!$("bitmapsEditMode")?.checked);
   await refreshHealth();
   const search = $("bitmapsSearch");
   if (search) search.addEventListener("input", () => renderBitmapsTable());

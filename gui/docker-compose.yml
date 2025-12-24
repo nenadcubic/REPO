@@ -28,7 +28,7 @@ services:
       - ER_GUI_LOG_LEVEL=${ER_GUI_LOG_LEVEL:-info}
       - ER_GUI_STORE_PREVIEW_LIMIT=${ER_GUI_STORE_PREVIEW_LIMIT:-25}
     volumes:
-      - ./presets:/app/presets:ro
+      - ./presets:/app/presets
       - er_gui_backend_logs:/app/logs
     ports:
       - "${GUI_API_PORT:-8000}:8000"
@@ -60,4 +60,3 @@ services:
 volumes:
   er_gui_redis_data:
   er_gui_backend_logs:
-

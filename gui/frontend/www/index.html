@@ -260,23 +260,115 @@
             <input id="bitmapsSearch" class="input" placeholder="Search by bit, key, name, group, description" />
             <div class="row">
               <button id="btnBitmapsRefresh" class="btn">Refresh</button>
+              <label class="label" style="margin: 0; display: flex; align-items: center; gap: 8px">
+                <input id="bitmapsEditMode" type="checkbox" />
+                Edit mode
+              </label>
             </div>
-            <div class="panel">
-              <div class="panel-title">Bit-maps</div>
-              <div id="bitmapsMeta" class="help"></div>
-              <div class="table-wrap">
-                <table class="table">
-                  <thead>
-                    <tr>
-                      <th>Bit</th>
-                      <th>Key</th>
-                      <th>Name</th>
-                      <th>Group</th>
-                      <th>Description</th>
-                    </tr>
-                  </thead>
-                  <tbody id="bitmapsTbody"></tbody>
-                </table>
+            <div class="grid2">
+              <div class="panel">
+                <div class="panel-title">Bit-maps</div>
+                <div id="bitmapsMeta" class="help"></div>
+                <div class="table-wrap">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th>Bit</th>
+                        <th>Key</th>
+                        <th>Name</th>
+                        <th>Group</th>
+                        <th>Description</th>
+                      </tr>
+                    </thead>
+                    <tbody id="bitmapsTbody"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div id="bitmapsItemPanel" class="panel hidden">
+                <div class="panel-title">Edit Bit-map Item</div>
+                <div class="help">Bit is read-only. Saving creates or updates an explicit item for this bit.</div>
+                <label class="label">Bit</label>
+                <input id="bmEditBit" class="input" disabled />
+                <label class="label">Group</label>
+                <select id="bmEditGroup" class="input"></select>
+                <label class="label">Name</label>
+                <input id="bmEditName" class="input" placeholder="(optional)" />
+                <label class="label">Key</label>
+                <input id="bmEditKey" class="input" placeholder="(optional)" />
+                <label class="label">Description</label>
+                <textarea id="bmEditDesc" class="input" rows="3" placeholder="(optional)"></textarea>
+                <div class="row">
+                  <button id="btnBmItemSave" class="btn primary">Save</button>
+                  <button id="btnBmItemCancel" class="btn">Cancel</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="bitmapsEditOnly" class="grid2 hidden">
+              <div class="panel">
+                <div class="panel-title">Groups</div>
+                <div class="help">Groups define the allowed values for the item Group dropdown.</div>
+                <label class="label">Default group</label>
+                <div class="row">
+                  <select id="bmDefaultGroup" class="input"></select>
+                  <button id="btnBmDefaultGroupSave" class="btn">Save</button>
+                </div>
+                <div class="table-wrap">
+                  <table class="table" style="min-width: 520px">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Label</th>
+                        <th>Order</th>
+                        <th>Color</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="bmGroupsTbody"></tbody>
+                  </table>
+                </div>
+
+                <div class="subhead">Add / Edit group</div>
+                <label class="label">ID (key)</label>
+                <input id="bmGroupId" class="input" placeholder="status" />
+                <label class="label">Label</label>
+                <input id="bmGroupLabel" class="input" placeholder="Status" />
+                <label class="label">Order</label>
+                <input id="bmGroupOrder" class="input" placeholder="10" />
+                <label class="label">Color (optional)</label>
+                <input id="bmGroupColor" class="input" placeholder="blue" />
+                <div class="row">
+                  <button id="btnBmGroupSave" class="btn primary">Save</button>
+                  <button id="btnBmGroupCancel" class="btn">Cancel</button>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-title">Bulk assign</div>
+                <div class="help">
+                  Lines like: <code>status: 1 2 3</code>, <code>risk: 100-199</code>, <code>risk: 100..199</code>
+                </div>
+                <label class="label">Input</label>
+                <textarea
+                  id="bmBulkText"
+                  class="input"
+                  rows="8"
+                  placeholder="status: 1 2 3&#10;risk: 100-109"
+                ></textarea>
+                <div class="row">
+                  <label class="label" style="margin: 0; display: flex; align-items: center; gap: 8px">
+                    <input id="bmBulkAutoname" type="checkbox" />
+                    Autoname newly created items
+                  </label>
+                </div>
+                <div class="row">
+                  <button id="btnBmBulkApply" class="btn primary">Apply</button>
+                </div>
+                <div class="panel">
+                  <div class="panel-title">Summary</div>
+                  <pre id="bmBulkOut" class="out"></pre>
+                </div>
               </div>
             </div>
           </section>

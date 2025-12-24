@@ -47,6 +47,7 @@ OpenAPI 3.1:
 ## Bit-maps
 
 - Backend loads `bitmaps.json` from the selected preset directory and exposes it via `GET /api/v1/bitmaps`.
+- Edit mode saves updates back to `gui/presets/<GUI_PRESET>/bitmaps.json` via `PUT /api/v1/bitmaps` (metadata-only; no Redis operations).
 - `bitmaps.json` `defaults.format` is reserved for future use (not active in v1); hover tooltip text is fixed to `NAME: 0` / `NAME: 1`.
 - The GUI caches bit-maps in memory (no per-hover requests).
 

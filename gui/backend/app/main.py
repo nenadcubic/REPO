@@ -15,7 +15,7 @@ from .errors import ApiError, err, ok
 from .models import PutRequest, QueryRequest, StoreRequest
 from .redis_bits import decode_flags_bin, element_key_with_prefix
 from .settings import load_settings
-from .bitmaps import load_bitmaps_from_preset
+from .bitmaps import load_bitmaps_from_preset, save_bitmaps_to_preset
 
 
 BACKEND_VERSION = "0.1.0"
@@ -130,6 +130,14 @@ async def config() -> dict[str, Any]:
 @app.get("/api/v1/bitmaps")
 async def bitmaps() -> dict[str, Any]:
     data = load_bitmaps_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
+    return ok(data)
+
+
+@app.put("/api/v1/bitmaps")
+async def bitmaps_put(document: dict[str, Any]) -> dict[str, Any]:
+    save_bitmaps_to_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger, document=document)
+    data = load_bitmaps_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
+    logger.info("bitmaps saved preset=%s", settings.gui_preset)
     return ok(data)
 
 
