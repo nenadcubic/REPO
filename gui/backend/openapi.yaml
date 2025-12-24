@@ -1284,13 +1284,15 @@ components:
                     $ref: "#/components/schemas/OrderTotalReportItem"
     ExplorerNamespace:
       type: object
-      required: [name, key_count, updated_at]
+      required: [name, key_count, updated_at, layout]
       properties:
         name:
           type: string
         key_count:
           type: integer
         updated_at:
+          type: string
+        layout:
           type: string
     ExplorerElementsListResponse:
       type: object
@@ -1306,6 +1308,9 @@ components:
           type: integer
         total:
           type: integer
+        truncated:
+          type: boolean
+          nullable: true
     ExplorerElementsListItem:
       type: object
       required: [key, short_name, set_bits_count, ttl]
@@ -1321,7 +1326,7 @@ components:
           nullable: true
     ExplorerElement:
       type: object
-      required: [key, short_name, namespace, bits, set_bits, ttl]
+      required: [key, short_name, namespace, kind, ttl]
       properties:
         key:
           type: string
@@ -1329,15 +1334,23 @@ components:
           type: string
         namespace:
           type: string
+        kind:
+          type: string
         bits:
           type: integer
+          nullable: true
         set_bits:
           type: array
           items:
             type: integer
+          nullable: true
         ttl:
           type: integer
           nullable: true
+        hash:
+          type: object
+          nullable: true
+          additionalProperties: true
     ExplorerNamespaceBitmapResponse:
       type: object
       required: [namespace, bits, elements]

@@ -4,6 +4,7 @@ type NamespaceInfo = {
   name: string; // namespace id (preset-backed)
   key_count: number; // element count (universe set size)
   updated_at: string;
+  layout: string;
 };
 
 type ElementsListItem = {
@@ -24,9 +25,11 @@ type ElementDetailsResponse = {
   key: string;
   short_name: string;
   namespace: string;
-  bits: number; // expected 4096
-  set_bits: number[];
+  kind: "bitset" | "hash";
+  bits?: number;
+  set_bits?: number[];
   ttl: number | null;
+  hash?: { field_count?: number; fields?: Record<string, string>; truncated?: boolean };
 };
 
 type NamespaceBitmapRow = {
@@ -318,6 +321,10 @@ export default function Explorer() {
 
   async function createElement() {
     if (!selectedNamespace) return;
+    if (selectedNamespace.layout !== "er_layout_v1") {
+      setCreateStatus("Quick create is supported only for bitset (er_layout_v1) namespaces.");
+      return;
+    }
     const name = String(createName || "").trim();
     if (!name || name.length > 100) {
       setCreateStatus("Name must be 1..100 chars.");
@@ -407,39 +414,45 @@ export default function Explorer() {
                 {selectedNamespace ? (
                   <>
                     Selected namespace: <code>{selectedNamespace.name}</code>
+                    {" "}
+                    <span className="muted">
+                      (layout: <code>{selectedNamespace.layout}</code>)
+                    </span>
                   </>
                 ) : (
                   "Select a namespace to load its elements."
                 )}
               </div>
 
-              <div className="panel" style={{ marginTop: 12 }}>
-                <div className="panel-title">Quick create (debug)</div>
-                <div className="help" style={{ marginTop: 0 }}>
-                  Creates a new element in the selected namespace using the existing API.
+              {selectedNamespace?.layout === "er_layout_v1" ? (
+                <div className="panel" style={{ marginTop: 12 }}>
+                  <div className="panel-title">Quick create (debug)</div>
+                  <div className="help" style={{ marginTop: 0 }}>
+                    Creates a new element in the selected namespace using the existing API.
+                  </div>
+                  <label className="label">Name</label>
+                  <input
+                    className="input"
+                    value={createName}
+                    onChange={(e) => setCreateName(e.target.value)}
+                    disabled={!selectedNamespace}
+                  />
+                  <label className="label">Bits</label>
+                  <input
+                    className="input"
+                    value={createBits}
+                    onChange={(e) => setCreateBits(e.target.value)}
+                    disabled={!selectedNamespace}
+                    placeholder="e.g. 1 2 3"
+                  />
+                  <div className="row">
+                    <button className="btn primary" onClick={createElement} disabled={!selectedNamespace}>
+                      Save element
+                    </button>
+                    {createStatus ? <span className="muted">{createStatus}</span> : null}
+                  </div>
                 </div>
-                <label className="label">Name</label>
-                <input
-                  className="input"
-                  value={createName}
-                  onChange={(e) => setCreateName(e.target.value)}
-                  disabled={!selectedNamespace}
-                />
-                <label className="label">Bits</label>
-                <input
-                  className="input"
-                  value={createBits}
-                  onChange={(e) => setCreateBits(e.target.value)}
-                  disabled={!selectedNamespace}
-                  placeholder="e.g. 1 2 3"
-                />
-                <div className="row">
-                  <button className="btn primary" onClick={createElement} disabled={!selectedNamespace}>
-                    Save element
-                  </button>
-                  {createStatus ? <span className="muted">{createStatus}</span> : null}
-                </div>
-              </div>
+              ) : null}
 
               <label className="label">Search</label>
               <input
@@ -535,7 +548,7 @@ export default function Explorer() {
                 <button
                   className={"tab " + (viewMode === "bitmap" ? "active" : "")}
                   onClick={() => setViewMode("bitmap")}
-                  disabled={!selectedNamespace}
+                  disabled={!selectedNamespace || selectedNamespace.layout !== "er_layout_v1"}
                 >
                   Namespace bitmap
                 </button>
@@ -761,18 +774,21 @@ function ElementPanel({
   tab: ElementTab;
   onTabChange: (t: ElementTab) => void;
 }) {
+  const canMatrix = element.kind === "bitset";
   return (
     <>
       <div className="tabs tabs-inline" style={{ marginTop: 0 }}>
         <button className={"tab " + (tab === "details" ? "active" : "")} onClick={() => onTabChange("details")}>
           Details
         </button>
-        <button className={"tab " + (tab === "matrix" ? "active" : "")} onClick={() => onTabChange("matrix")}>
-          Matrix
-        </button>
+        {canMatrix ? (
+          <button className={"tab " + (tab === "matrix" ? "active" : "")} onClick={() => onTabChange("matrix")}>
+            Matrix
+          </button>
+        ) : null}
       </div>
 
-      {tab === "details" ? <ElementDetails element={element} /> : <ElementMatrix element={element} />}
+      {tab === "details" || !canMatrix ? <ElementDetails element={element} /> : <ElementMatrix element={element} />}
     </>
   );
 }
@@ -784,12 +800,24 @@ function ElementDetails({ element }: { element: ElementDetailsResponse }) {
       <div className="help" style={{ marginTop: 0 }}>
         Key: <code>{element.key}</code>
         <br />
-        Namespace: <code>{element.namespace}</code> • TTL: <code>{fmtTtl(element.ttl)}</code> • Set bits:{" "}
-        <code>{setBits.length}</code>
+        Namespace: <code>{element.namespace}</code> • Type: <code>{element.kind}</code> • TTL: <code>{fmtTtl(element.ttl)}</code>
+        {element.kind === "bitset" ? (
+          <>
+            {" "}
+            • Set bits: <code>{setBits.length}</code>
+          </>
+        ) : null}
       </div>
-      <pre className="out" style={{ maxHeight: 320 }}>
-        {setBits.length ? setBits.join(", ") : "No set bits."}
-      </pre>
+      {element.kind === "bitset" ? (
+        <pre className="out" style={{ maxHeight: 320 }}>
+          {setBits.length ? setBits.join(", ") : "No set bits."}
+        </pre>
+      ) : (
+        <pre className="out" style={{ maxHeight: 320 }}>
+          {JSON.stringify(element.hash?.fields || {}, null, 2)}
+          {element.hash?.truncated ? "\n\n(note: fields truncated)" : ""}
+        </pre>
+      )}
     </>
   );
 }
@@ -797,7 +825,10 @@ function ElementDetails({ element }: { element: ElementDetailsResponse }) {
 function ElementMatrix({ element }: { element: ElementDetailsResponse }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
-  const setBits = useMemo(() => new Set<number>((element.set_bits || []).filter((b) => Number.isInteger(b))), [element.set_bits]);
+  const setBits = useMemo(
+    () => new Set<number>(((element.set_bits as number[] | undefined) || []).filter((b) => Number.isInteger(b))),
+    [element.set_bits],
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;

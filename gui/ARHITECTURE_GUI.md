@@ -41,6 +41,7 @@ Use a **left sidebar** with these sections (MVP):
 - Examples
 - Logs (optional, preferred)
 - Bit-maps (preset metadata)
+- Explorer
 
 ### 2.2 Screen structure rule
 Every screen follows this structure:

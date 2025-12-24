@@ -58,6 +58,33 @@ Namespace selection:
 - `bitmaps.json` `defaults.format` is reserved for future use (not active in v1); hover tooltip text is fixed to `NAME: 0` / `NAME: 1`.
 - The GUI caches bit-maps in memory (no per-hover requests).
 
+## Explorer
+
+The GUI includes an `Explorer` screen at:
+- `http://localhost:${GUI_HTTP_PORT:-18080}/explorer/`
+
+Purpose:
+- Quick overview of namespaces (left panel) and elements in a namespace (middle panel).
+- Detailed view of a single element’s bits (right panel): `Details` and 64×64 `Matrix`.
+- Namespace bitmap overview (right panel): renders many elements at once; click a row to open that element.
+
+How to use:
+1) Open `Explorer` from the sidebar.
+2) Pick a namespace.
+3) Search/sort elements, then click an element to inspect it.
+4) Switch `Element` / `Namespace bitmap` depending on whether you want a single element or a multi-element overview.
+
+Notes:
+- Explorer fully supports `er_layout_v1` namespaces (bitset elements: `Details`, 64×64 `Matrix`, and `Namespace bitmap`).
+- `or_layout_v2` namespaces are shown as a read-only object browser (hash view). Matrix/bitmap views are disabled because OR objects are not bitsets.
+- If you have no data, seed a dataset via `Examples` (seed-type examples).
+
+API (Explorer):
+- `GET /api/v1/explorer/namespaces`
+- `GET /api/v1/explorer/namespaces/{namespace}/elements?search=&page=&page_size=`
+- `GET /api/v1/explorer/elements/{encodedKey}`
+- `GET /api/v1/explorer/namespaces/{namespace}/bitmap?limit=&offset=`
+
 ## Examples
 
 - The GUI provides an `Examples` screen that can seed Redis with predefined datasets so the existing `Elements`, `Queries`, and `Matrix` views have known data to display.

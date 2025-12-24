@@ -77,8 +77,21 @@ You should see a dark-themed web interface with a sidebar:
 - Examples
 - Logs
 - Bit-maps
+- Explorer
 
 Use the Namespace selector in the header to switch between allowed Redis prefix families (for example `er:*` vs `or:*`).
+
+## Explorer
+
+The GUI also includes an `Explorer` screen (link in the sidebar) that provides a read-focused overview:
+
+1) Select a namespace (left column)
+2) Browse/search elements in that namespace (middle column)
+3) For bitset namespaces (`er_layout_v1`), inspect one element’s set bits in `Details` or visualize them in a 64×64 `Matrix`
+4) For bitset namespaces, switch to `Namespace bitmap` to render many elements at once; click a row to open that element
+5) For object namespaces (`or_layout_v2`), Explorer shows object hashes (Matrix/bitmap are not available)
+
+If the namespace has no elements, seed data via the `Examples` screen (seed-type examples) or create an element in `Elements`.
 
 ## Examples
 

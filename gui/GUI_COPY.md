@@ -12,6 +12,7 @@ Scope: User GUI copy (labels, help text, messages)
 - **Examples**
 - **Logs**
 - **Bit-maps**
+- **Explorer**
 
 ---
 
@@ -215,6 +216,18 @@ Scope: User GUI copy (labels, help text, messages)
 ### Panels:
 - `README` (rendered markdown)
 - `Result` (monospace summary)
+
+---
+
+## 7.3) Explorer Screen
+### Section title: `Explorer`
+### Description:
+> Browse namespaces and elements, inspect set bits, and visualize 4096-bit matrices or a namespace bitmap overview.
+
+### Main layout:
+- Left: `Namespaces`
+- Middle: `Elements`
+- Right: `Inspect` (Element view or Namespace bitmap)
 
 ---
 
