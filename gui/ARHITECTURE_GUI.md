@@ -88,6 +88,7 @@ If a future request does not mention Redis impacts, it is considered **incomplet
 Bit-maps note (v1):
 - Bit-maps are preset metadata only (no Redis keys, no TTL, no atomicity).
 - Matrix hover must use already-fetched element flags (no extra Redis calls per hover).
+- `bitmaps.json` `defaults.format` is reserved for future use (not active in v1); hover tooltip text is fixed to `NAME: 0` / `NAME: 1`.
 
 ---
 

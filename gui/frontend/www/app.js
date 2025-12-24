@@ -285,7 +285,6 @@ function drawMatrix() {
   if (!ctx) return;
 
   const cols = 64;
-  const rows = 64;
   const cell = canvas.width / cols;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -323,11 +322,10 @@ function setupMatrixHover() {
       return;
     }
 
-    const cols = 64;
-    const rows = 64;
-    const x = Math.floor((relX / rect.width) * cols);
-    const y = Math.floor((relY / rect.height) * rows);
-    const bit = y * cols + x;
+    const size = 64;
+    const x = Math.floor((relX / rect.width) * size);
+    const y = Math.floor((relY / rect.height) * size);
+    const bit = y * size + x;
     if (bit < 0 || bit > 4095) {
       hideMatrixTooltip();
       return;
@@ -370,7 +368,12 @@ function renderBitmapsTable() {
 
   const meta = bitmapsCache.meta || {};
   const missing = meta.missing ? " (missing)" : "";
-  metaEl.textContent = `Loaded: ${filtered.length}/${items.length}${missing}`;
+  const schema = String(bitmapsCache.raw?.schema || "").trim();
+  const preset = String(meta.preset || "").trim();
+  const parts = [`Loaded: ${filtered.length}/${items.length}${missing}`];
+  if (preset) parts.push(`Preset: ${preset}`);
+  if (schema) parts.push(`Schema: ${schema}`);
+  metaEl.textContent = parts.join(" • ");
 
   tbody.innerHTML = filtered
     .map((it) => {

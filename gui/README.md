@@ -47,6 +47,7 @@ OpenAPI 3.1:
 ## Bit-maps
 
 - Backend loads `bitmaps.json` from the selected preset directory and exposes it via `GET /api/v1/bitmaps`.
+- `bitmaps.json` `defaults.format` is reserved for future use (not active in v1); hover tooltip text is fixed to `NAME: 0` / `NAME: 1`.
 - The GUI caches bit-maps in memory (no per-hover requests).
 
 ## Safety defaults
@@ -54,8 +55,13 @@ OpenAPI 3.1:
 - List endpoints use `limit` (default `200`) to avoid huge responses/UI freezes.
 - Store TTL has a v1 cap: `ER_GUI_TTL_MAX_SEC` (default `86400`).
 
+## Selftest (backend container)
+
+After the sandbox is up, run:
+- `docker compose -f gui/docker-compose.yml exec -T backend bash -lc /app/scripts/selftest.sh`
+
 ## Troubleshooting
 
-- Check health: `curl -sS http://localhost:${GUI_API_PORT:-8000}/api/v1/health | jq`
+- Check health: `curl -sS http://localhost:${GUI_API_PORT:-8000}/api/v1/health` (optionally: `| jq`)
 - View logs: `docker compose -f gui/docker-compose.yml logs -f --tail=200 backend`
 - If ports are busy, set `GUI_HTTP_PORT` / `GUI_API_PORT` in `gui/.env`.
