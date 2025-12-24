@@ -19,6 +19,7 @@
           <button class="nav-item" data-view="elements">Elements</button>
           <button class="nav-item" data-view="queries">Queries</button>
           <button class="nav-item" data-view="store">Store + TTL</button>
+          <button class="nav-item" data-view="examples">Examples</button>
           <button class="nav-item" data-view="logs">Logs</button>
           <button class="nav-item" data-view="bitmaps">Bit-maps</button>
         </nav>
@@ -268,6 +269,29 @@
                 <div class="panel-title">Result</div>
                 <pre id="inspectOut" class="out"></pre>
               </div>
+            </div>
+          </section>
+
+          <section id="view-examples" class="view">
+            <div class="desc">Load predefined example datasets into Redis (no scripts, no arbitrary execution).</div>
+            <label class="label">Namespace</label>
+            <select id="examplesNs" class="input"></select>
+            <label class="label">Example</label>
+            <select id="examplesSelect" class="input"></select>
+            <div class="row">
+              <label class="label" style="margin: 0; display: flex; align-items: center; gap: 8px">
+                <input id="examplesReset" type="checkbox" />
+                Reset namespace first (safe delete of canonical keys only)
+              </label>
+            </div>
+            <div class="row">
+              <button id="btnExamplesRun" class="btn primary">Load into Redis</button>
+              <button id="btnExamplesRefresh" class="btn">Refresh list</button>
+            </div>
+            <div class="panel">
+              <div class="panel-title">Result</div>
+              <pre id="examplesOut" class="out"></pre>
+              <div id="examplesLinks" class="row"></div>
             </div>
           </section>
 

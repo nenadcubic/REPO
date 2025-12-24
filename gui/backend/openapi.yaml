@@ -126,6 +126,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /api/v1/examples:
+    get:
+      operationId: examples
+      responses:
+        "200":
+          description: List of predefined examples available to load into Redis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExamplesListResponse"
+  /api/v1/examples/run:
+    post:
+      operationId: examplesRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExamplesRunRequest"
+      responses:
+        "200":
+          description: Result of running a predefined example
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExamplesRunResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/elements/put:
     post:
       operationId: elementsPut
@@ -910,3 +942,80 @@ components:
         suggested_layout:
           type: object
           additionalProperties: true
+    ExamplesListResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [examples]
+          properties:
+            examples:
+              type: array
+              items:
+                $ref: "#/components/schemas/ExampleInfo"
+    ExampleInfo:
+      type: object
+      required: [id, title, description, ns_hint, element_count_estimate]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        ns_hint:
+          type: string
+        element_count_estimate:
+          type: integer
+    ExamplesRunRequest:
+      type: object
+      required: [id, ns, reset]
+      properties:
+        id:
+          type: string
+        ns:
+          type: string
+        reset:
+          type: boolean
+    ExamplesRunResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [id, ns, created, updated, skipped, counts]
+          properties:
+            id:
+              type: string
+            ns:
+              type: string
+            created:
+              type: array
+              items:
+                type: string
+            updated:
+              type: array
+              items:
+                type: string
+            skipped:
+              type: array
+              items:
+                type: string
+            counts:
+              type: object
+              required: [created, updated, skipped]
+              properties:
+                created:
+                  type: integer
+                updated:
+                  type: integer
+                skipped:
+                  type: integer
+            reset:
+              type: object
+              additionalProperties: true

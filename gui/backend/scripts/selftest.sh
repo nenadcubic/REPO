@@ -52,6 +52,9 @@ json_get "/api/v1/namespaces/discover?max_keys=2000&sample_per_prefix=50&scan_co
 echo "[3/6] config"
 json_get "/api/v1/config" | assert_ok_json
 
+echo "[3b/6] examples"
+json_get "/api/v1/examples" | assert_ok_json
+
 echo "[4/6] bitmaps"
 json_get "/api/v1/bitmaps?ns=$NS" | python3 -c '
 import json,sys

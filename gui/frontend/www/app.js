@@ -36,6 +36,7 @@ const matrixState = {
 };
 
 let nsDiscoverCache = null;
+let examplesCache = null;
 
 function disableAllInputs() {
   for (const el of document.querySelectorAll(".content input, .content select, .content textarea")) {
@@ -229,6 +230,7 @@ function setActiveView(name) {
     elements: "Element Operations",
     queries: "Find Matching Elements",
     store: "Store Results with Expiry",
+    examples: "Examples",
     logs: "Backend Logs (read-only)",
     bitmaps: "Bit-maps",
   };
@@ -258,6 +260,16 @@ function setupNav() {
         await fetchBitmaps();
         renderBitmapsTable();
         renderBitmapsGroups();
+      }
+      if (el.dataset.view === "examples") {
+        await withRequest({
+          buttonEl: null,
+          outEl: $("examplesOut"),
+          fn: async () => {
+            await fetchExamples({ force: false });
+            renderExamples();
+          },
+        });
       }
     });
   }
@@ -921,6 +933,75 @@ function renderNsDiscover() {
     .join("");
 }
 
+async function fetchExamples({ force = false } = {}) {
+  if (examplesCache && !force) return examplesCache;
+  const out = await apiJson("/api/v1/examples");
+  if (!out.ok) return null;
+  examplesCache = out.data;
+  return examplesCache;
+}
+
+function renderExamples() {
+  const nsSel = $("examplesNs");
+  const exSel = $("examplesSelect");
+  const outEl = $("examplesOut");
+  const links = $("examplesLinks");
+  if (!nsSel || !exSel || !outEl || !links) return;
+
+  nsSel.innerHTML = (nsState.options || [])
+    .map((o) => `<option value="${escapeHtml(o.id)}">${escapeHtml(`${o.label} (${o.prefix}:*)`)}</option>`)
+    .join("");
+  nsSel.value = nsState.selectedId;
+
+  const list = Array.isArray(examplesCache?.examples) ? examplesCache.examples : [];
+  exSel.innerHTML = list
+    .map((e) => `<option value="${escapeHtml(e.id)}">${escapeHtml(`${e.title} (${e.id})`)}</option>`)
+    .join("");
+
+  if (!list.length) {
+    outEl.textContent = "No examples available.";
+    links.innerHTML = "";
+    return;
+  }
+  const first = list[0];
+  if (!String(exSel.value || "").trim()) exSel.value = first.id;
+  const selected = list.find((e) => e.id === exSel.value) || first;
+  outEl.textContent =
+    `${selected.title}\n` +
+    `${selected.description}\n\n` +
+    `Estimated elements: ${selected.element_count_estimate ?? "n/a"}\n` +
+    `Namespace hint: ${selected.ns_hint || "n/a"}\n`;
+  links.innerHTML = "";
+}
+
+function renderExamplesRunResult(res) {
+  const outEl = $("examplesOut");
+  const links = $("examplesLinks");
+  if (!outEl || !links) return;
+  if (!res || !res.ok) {
+    renderEnvelope(outEl, res);
+    links.innerHTML = "";
+    return;
+  }
+  const d = res.data || {};
+  outEl.textContent =
+    `Example: ${d.id}\n` +
+    `Namespace: ${d.ns}\n` +
+    `Created: ${d.counts?.created ?? 0}\n` +
+    `Updated: ${d.counts?.updated ?? 0}\n` +
+    `Skipped: ${d.counts?.skipped ?? 0}\n` +
+    (d.reset ? `\nReset:\n- scanned: ${d.reset.scanned}\n- deleted: ${d.reset.deleted}\n- skipped: ${d.reset.skipped}\n` : "");
+
+  const names = [...(d.created || []), ...(d.updated || [])].slice(0, 20);
+  if (!names.length) {
+    links.innerHTML = "";
+    return;
+  }
+  links.innerHTML = names
+    .map((n) => `<button class="btn" data-name="${escapeHtml(n)}">Open ${escapeHtml(n)}</button>`)
+    .join("");
+}
+
 async function loadNamespaces() {
   const selectEl = $("nsSelect");
   if (!selectEl) return;
@@ -1402,6 +1483,59 @@ function setupActions() {
       },
     });
   });
+
+  $("btnExamplesRefresh").addEventListener("click", async () => {
+    if (state.locked) return;
+    await withRequest({
+      buttonEl: $("btnExamplesRefresh"),
+      outEl: $("examplesOut"),
+      fn: async () => {
+        await fetchExamples({ force: true });
+        renderExamples();
+      },
+    });
+  });
+
+  $("btnExamplesRun").addEventListener("click", async () => {
+    if (state.locked) return;
+    const id = String($("examplesSelect")?.value || "").trim();
+    const ns = String($("examplesNs")?.value || "").trim() || selectedNsId();
+    const reset = !!$("examplesReset")?.checked;
+    if (!id || !ns) {
+      const msg = "This field is required.";
+      state.error = { type: "validation", message: msg };
+      showBanner("error", msg);
+      return;
+    }
+
+    await withRequest({
+      buttonEl: $("btnExamplesRun"),
+      outEl: $("examplesOut"),
+      fn: async () => {
+        const out = await apiJson("/api/v1/examples/run", { method: "POST", body: JSON.stringify({ id, ns, reset }) });
+        if (!out.ok) {
+          state.error = { type: "request", message: out?.error?.message || "Request failed" };
+          showBanner("error", out?.error?.message || "Request failed");
+          renderExamplesRunResult(out);
+          return;
+        }
+        state.error = null;
+        showBanner("success", "✅ Loaded example into Redis.");
+        renderExamplesRunResult(out);
+      },
+    });
+  });
+
+  $("examplesLinks").addEventListener("click", (ev) => {
+    if (state.locked) return;
+    const btn = ev.target.closest("button");
+    const name = btn?.dataset?.name;
+    if (!name) return;
+    setActiveView("elements");
+    setActiveTabGroup("elements", "elements-get");
+    $("getName").value = name;
+    $("matrixName").value = name;
+  });
   $("btnPut").addEventListener("click", doPut);
   $("btnGet").addEventListener("click", doGet);
   $("btnQuery").addEventListener("click", doQuery);
@@ -1586,11 +1720,13 @@ setActiveView("status");
 async function init() {
   await loadNamespaces();
   await loadConfig();
+  await fetchExamples({ force: false });
   await fetchBitmaps({ silent: true });
   renderBitmapsGroups();
   setBitmapsEditMode(!!$("bitmapsEditMode")?.checked);
   await refreshHealth();
   renderNsDiscover();
+  renderExamples();
   const search = $("bitmapsSearch");
   if (search) search.addEventListener("input", () => renderBitmapsTable());
   setupMatrixHover();

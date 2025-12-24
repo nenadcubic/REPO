@@ -58,6 +58,14 @@ Namespace selection:
 - `bitmaps.json` `defaults.format` is reserved for future use (not active in v1); hover tooltip text is fixed to `NAME: 0` / `NAME: 1`.
 - The GUI caches bit-maps in memory (no per-hover requests).
 
+## Examples
+
+- The GUI provides an `Examples` screen that can seed Redis with predefined datasets so the existing `Elements`, `Queries`, and `Matrix` views have known data to display.
+- Examples are a fixed whitelist implemented in backend code (no scripts are executed).
+- API:
+  - `GET /api/v1/examples`
+  - `POST /api/v1/examples/run` with `{ "id": "...", "ns": "...", "reset": false }`
+
 ## Safety defaults
 
 - List endpoints use `limit` (default `200`) to avoid huge responses/UI freezes.

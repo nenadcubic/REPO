@@ -91,6 +91,10 @@ Bit-maps note (v1):
 - Bit-maps are namespace-scoped: `gui/presets/<GUI_PRESET>/bitmaps/<ns>.json`.
 - `bitmaps.json` `defaults.format` is reserved for future use (not active in v1); hover tooltip text is fixed to `NAME: 0` / `NAME: 1`.
 
+Examples note (v1):
+- Examples seed known elements via backend (implemented as a whitelist, no script execution).
+- Optional reset must only delete canonical keys within the selected namespace prefix (no wildcard delete across prefixes).
+
 ---
 
 ## 5) Input standards (canonical normalization)

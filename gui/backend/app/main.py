@@ -18,6 +18,7 @@ from .settings import load_settings
 from .bitmaps import load_bitmaps_from_preset, save_bitmaps_to_preset
 from .namespaces import load_namespaces_from_preset, namespaces_to_map
 from .namespace_discovery import DiscoveryLimits, discover_namespaces, write_namespaces_generated
+from .examples import list_examples, run_example
 
 
 BACKEND_VERSION = "0.1.0"
@@ -160,6 +161,48 @@ async def namespaces_discover(
             presets_dir=settings.presets_dir, preset=settings.gui_preset, discovery=discovery, logger=logger
         )
     return ok(out)
+
+@app.get("/api/v1/examples")
+async def examples() -> dict[str, Any]:
+    ex = [
+        {
+            "id": e.id,
+            "title": e.title,
+            "description": e.description,
+            "ns_hint": e.ns_hint,
+            "element_count_estimate": len(e.elements),
+        }
+        for e in list_examples()
+    ]
+    return ok({"examples": ex})
+
+
+@app.post("/api/v1/examples/run")
+async def examples_run(body: dict[str, Any]) -> dict[str, Any]:
+    ex_id = body.get("id")
+    ns = body.get("ns")
+    reset = body.get("reset", False)
+    if not isinstance(ex_id, str) or not ex_id.strip():
+        raise ApiError("INVALID_INPUT", "id is required", status_code=422)
+    if not isinstance(ns, str) or not ns.strip():
+        raise ApiError("INVALID_INPUT", "ns is required", status_code=422)
+    if not isinstance(reset, bool):
+        raise ApiError("INVALID_INPUT", "reset must be boolean", status_code=422)
+
+    ns_id, prefix = _resolve_ns(ns)
+    r = redis_client()
+    data = run_example(
+        example_id=ex_id.strip(),
+        ns=ns_id,
+        prefix=prefix,
+        reset=reset,
+        r=r,
+        er_cli_path=settings.er_cli_path,
+        redis_host=settings.redis_host,
+        redis_port=settings.redis_port,
+        logger=logger,
+    )
+    return ok(data)
 
 
 @app.get("/api/v1/bitmaps")
