@@ -20,12 +20,15 @@ def _run_er_cli(
     args: Sequence[str],
     redis_host: str,
     redis_port: int,
+    redis_prefix: str | None = None,
     keys_only: bool = False,
     timeout_sec: int = 10,
 ) -> CliResult:
     env = os.environ.copy()
     env["ER_REDIS_HOST"] = redis_host
     env["ER_REDIS_PORT"] = str(redis_port)
+    if redis_prefix is not None and str(redis_prefix).strip() != "":
+        env["ER_PREFIX"] = str(redis_prefix).strip(":")
     if keys_only:
         env["ER_KEYS_ONLY"] = "1"
 
@@ -72,12 +75,15 @@ def _parse_er_cli_count(output: str) -> int | None:
     return None
 
 
-def er_cli_put(*, er_cli_path: str, redis_host: str, redis_port: int, name: str, bits: list[int]) -> None:
+def er_cli_put(
+    *, er_cli_path: str, redis_host: str, redis_port: int, redis_prefix: str | None, name: str, bits: list[int]
+) -> None:
     _run_er_cli(
         er_cli_path=er_cli_path,
         args=["put", name, *[str(b) for b in bits]],
         redis_host=redis_host,
         redis_port=redis_port,
+        redis_prefix=redis_prefix,
     )
 
 
@@ -92,23 +98,27 @@ def er_cli_query(*, er_cli_path: str, redis_host: str, redis_port: int, args: Se
 
 
 def er_cli_query_with_count(
-    *, er_cli_path: str, redis_host: str, redis_port: int, args: Sequence[str]
+    *, er_cli_path: str, redis_host: str, redis_port: int, redis_prefix: str | None, args: Sequence[str]
 ) -> tuple[int | None, list[str]]:
     res = _run_er_cli(
         er_cli_path=er_cli_path,
         args=args,
         redis_host=redis_host,
         redis_port=redis_port,
+        redis_prefix=redis_prefix,
     )
     return _parse_er_cli_count(res.stdout), _parse_er_cli_members(res.stdout)
 
 
-def er_cli_store_key(*, er_cli_path: str, redis_host: str, redis_port: int, args: Sequence[str]) -> str:
+def er_cli_store_key(
+    *, er_cli_path: str, redis_host: str, redis_port: int, redis_prefix: str | None, args: Sequence[str]
+) -> str:
     res = _run_er_cli(
         er_cli_path=er_cli_path,
         args=args,
         redis_host=redis_host,
         redis_port=redis_port,
+        redis_prefix=redis_prefix,
         keys_only=True,
     )
     store_key = res.stdout.strip()

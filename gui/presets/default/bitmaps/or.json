@@ -1,0 +1,20 @@
+{
+  "schema": "er.gui.bitmaps.v1",
+  "meta": {
+    "name": "Oracle-Redis bit-maps (default)",
+    "version": 1,
+    "updated_utc": "2025-12-24T00:00:00Z"
+  },
+  "groups": {
+    "status": { "label": "Status", "order": 10, "color": "blue" }
+  },
+  "labels": { "UNNAMED_PREFIX": "Bit", "UNKNOWN_NAME": "UNKNOWN" },
+  "defaults": {
+    "group": "status",
+    "format": "{name}: {value}",
+    "missing_name_format": "{labels.UNNAMED_PREFIX} {bit}: {value}"
+  },
+  "items": [],
+  "ranges": []
+}
+

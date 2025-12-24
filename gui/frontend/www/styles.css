@@ -98,6 +98,10 @@ code { color: var(--muted); }
   padding: var(--s16);
   border-bottom: 1px solid var(--border);
   background: rgba(15, 27, 51, 0.35);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--s16);
 }
 .header-title {
   font-weight: 800;
@@ -107,6 +111,18 @@ code { color: var(--muted); }
   color: var(--muted);
   font-size: 12px;
   margin-top: 2px;
+}
+
+.header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.header-right .input {
+  width: 100%;
 }
 
 .content {

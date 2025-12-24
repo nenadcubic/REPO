@@ -16,6 +16,7 @@ from .models import PutRequest, QueryRequest, StoreRequest
 from .redis_bits import decode_flags_bin, element_key_with_prefix
 from .settings import load_settings
 from .bitmaps import load_bitmaps_from_preset, save_bitmaps_to_preset
+from .namespaces import load_namespaces_from_preset, namespaces_to_map
 
 
 BACKEND_VERSION = "0.1.0"
@@ -56,10 +57,20 @@ def _redis_used_memory(r: redis.Redis) -> int | None:
     return None
 
 
-def _ensure_store_key_safe(store_key: str) -> None:
-    pfx = (settings.er_prefix or "er").strip(":")
+def _ensure_store_key_safe(store_key: str, *, prefix: str) -> None:
+    pfx = (prefix or "er").strip(":")
     if not store_key.startswith(f"{pfx}:tmp:"):
         raise ApiError("INVALID_STORE_KEY", f"store_key must start with {pfx}:tmp:", status_code=400)
+
+
+def _resolve_ns(ns: str | None) -> tuple[str, str]:
+    doc = load_namespaces_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
+    default_id, mp = namespaces_to_map(doc)
+    ns_id = (ns or "").strip() or default_id
+    ent = mp.get(ns_id)
+    if not ent:
+        raise ApiError("INVALID_INPUT", "unknown namespace", status_code=422, details={"ns": ns_id})
+    return ns_id, ent.prefix
 
 
 app = FastAPI(title="element-redis GUI API", version=BACKEND_VERSION)
@@ -126,44 +137,64 @@ async def config() -> dict[str, Any]:
         }
     )
 
+@app.get("/api/v1/namespaces")
+async def namespaces() -> dict[str, Any]:
+    data = load_namespaces_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
+    return ok(data)
+
 
 @app.get("/api/v1/bitmaps")
-async def bitmaps() -> dict[str, Any]:
-    data = load_bitmaps_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
+async def bitmaps(ns: str | None = None) -> dict[str, Any]:
+    ns_id, prefix = _resolve_ns(ns)
+    data = load_bitmaps_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, ns=ns_id, logger=logger)
+    data.setdefault("meta", {})
+    if isinstance(data["meta"], dict):
+        data["meta"].setdefault("ns", ns_id)
+        data["meta"].setdefault("prefix", prefix)
     return ok(data)
 
 
 @app.put("/api/v1/bitmaps")
-async def bitmaps_put(document: dict[str, Any]) -> dict[str, Any]:
-    save_bitmaps_to_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger, document=document)
-    data = load_bitmaps_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
-    logger.info("bitmaps saved preset=%s", settings.gui_preset)
+async def bitmaps_put(document: dict[str, Any], ns: str | None = None) -> dict[str, Any]:
+    ns_id, prefix = _resolve_ns(ns)
+    save_bitmaps_to_preset(
+        presets_dir=settings.presets_dir, preset=settings.gui_preset, ns=ns_id, logger=logger, document=document
+    )
+    data = load_bitmaps_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, ns=ns_id, logger=logger)
+    logger.info("bitmaps saved preset=%s ns=%s", settings.gui_preset, ns_id)
+    data.setdefault("meta", {})
+    if isinstance(data["meta"], dict):
+        data["meta"].setdefault("ns", ns_id)
+        data["meta"].setdefault("prefix", prefix)
     return ok(data)
 
 
 @app.post("/api/v1/elements/put")
-async def elements_put(req: PutRequest) -> dict[str, Any]:
+async def elements_put(req: PutRequest, ns: str | None = None) -> dict[str, Any]:
     bits = sorted(set(req.bits))
+    ns_id, prefix = _resolve_ns(ns or req.ns)
     er_cli_put(
         er_cli_path=settings.er_cli_path,
         redis_host=settings.redis_host,
         redis_port=settings.redis_port,
+        redis_prefix=prefix,
         name=req.name,
         bits=bits,
     )
-    logger.info("put name=%s bits=%d", req.name, len(bits))
+    logger.info("put ns=%s name=%s bits=%d", ns_id, req.name, len(bits))
     return ok({"name": req.name, "written_bits": len(bits)})
 
 
 @app.get("/api/v1/elements/get")
-async def elements_get(name: str, limit: int = 200) -> dict[str, Any]:
+async def elements_get(name: str, limit: int = 200, ns: str | None = None) -> dict[str, Any]:
     if not name or len(name) > 100:
         raise ApiError("INVALID_NAME", "name must be 1..100 chars", status_code=422)
     if limit <= 0 or limit > 4096:
         raise ApiError("INVALID_LIMIT", "limit must be 1..4096", status_code=422)
+    _, prefix = _resolve_ns(ns)
 
     r = redis_client()
-    key = element_key_with_prefix(settings.er_prefix, name)
+    key = element_key_with_prefix(prefix, name)
     flags_bin = r.hget(key, "flags_bin")
     if flags_bin is None:
         raise ApiError("NOT_FOUND", "element not found", status_code=404, details={"name": name})
@@ -178,7 +209,8 @@ async def elements_get(name: str, limit: int = 200) -> dict[str, Any]:
 
 
 @app.post("/api/v1/query")
-async def query(req: QueryRequest) -> dict[str, Any]:
+async def query(req: QueryRequest, ns: str | None = None) -> dict[str, Any]:
+    ns_id, prefix = _resolve_ns(ns or req.ns)
     if req.type == "find":
         args = ["find", str(req.bit)]
     elif req.type == "find_all":
@@ -194,16 +226,18 @@ async def query(req: QueryRequest) -> dict[str, Any]:
         er_cli_path=settings.er_cli_path,
         redis_host=settings.redis_host,
         redis_port=settings.redis_port,
+        redis_prefix=prefix,
         args=args,
     )
     limit = int(req.limit)
     limited = names[:limit]
     count = int(count_from_cli) if count_from_cli is not None else len(names)
-    return ok({"type": req.type, "count": count, "returned": len(limited), "limit": limit, "names": limited})
+    return ok({"ns": ns_id, "type": req.type, "count": count, "returned": len(limited), "limit": limit, "names": limited})
 
 
 @app.post("/api/v1/store")
-async def store(req: StoreRequest) -> dict[str, Any]:
+async def store(req: StoreRequest, ns: str | None = None) -> dict[str, Any]:
+    ns_id, prefix = _resolve_ns(ns or req.ns)
     if req.ttl_sec > int(settings.ttl_max_sec):
         raise ApiError(
             "INVALID_TTL",
@@ -222,9 +256,10 @@ async def store(req: StoreRequest) -> dict[str, Any]:
         er_cli_path=settings.er_cli_path,
         redis_host=settings.redis_host,
         redis_port=settings.redis_port,
+        redis_prefix=prefix,
         args=args,
     )
-    _ensure_store_key_safe(store_key)
+    _ensure_store_key_safe(store_key, prefix=prefix)
 
     r = redis_client()
     ttl = r.ttl(store_key)
@@ -248,6 +283,7 @@ async def store(req: StoreRequest) -> dict[str, Any]:
 
     return ok(
         {
+            "ns": ns_id,
             "store_key": store_key,
             "ttl_remaining": ttl_remaining,
             "count": count,
@@ -258,8 +294,9 @@ async def store(req: StoreRequest) -> dict[str, Any]:
 
 
 @app.get("/api/v1/store/inspect")
-async def store_inspect(store_key: str, limit: int = 200) -> dict[str, Any]:
-    _ensure_store_key_safe(store_key)
+async def store_inspect(store_key: str, limit: int = 200, ns: str | None = None) -> dict[str, Any]:
+    ns_id, prefix = _resolve_ns(ns)
+    _ensure_store_key_safe(store_key, prefix=prefix)
     if limit <= 0 or limit > 5000:
         raise ApiError("INVALID_LIMIT", "limit must be 1..5000", status_code=422)
 
@@ -284,6 +321,7 @@ async def store_inspect(store_key: str, limit: int = 200) -> dict[str, Any]:
 
     return ok(
         {
+            "ns": ns_id,
             "store_key": store_key,
             "ttl_remaining": ttl_remaining,
             "count": count,
@@ -295,8 +333,9 @@ async def store_inspect(store_key: str, limit: int = 200) -> dict[str, Any]:
 
 
 @app.delete("/api/v1/store")
-async def store_delete(store_key: str) -> dict[str, Any]:
-    _ensure_store_key_safe(store_key)
+async def store_delete(store_key: str, ns: str | None = None) -> dict[str, Any]:
+    _, prefix = _resolve_ns(ns)
+    _ensure_store_key_safe(store_key, prefix=prefix)
     r = redis_client()
     deleted = bool(r.delete(store_key))
     return ok({"deleted": deleted})

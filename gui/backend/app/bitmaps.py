@@ -43,11 +43,36 @@ def _bit_ok(bit: int) -> bool:
     return 0 <= bit <= 4095
 
 
+def _sanitize_ns(ns: str) -> str:
+    s = (ns or "").strip()
+    if not s:
+        return "er"
+    safe = []
+    for ch in s:
+        if ch.isalnum() or ch in ("_", "-", "."):
+            safe.append(ch)
+    return "".join(safe) or "er"
+
+
+def _bitmaps_path(*, presets_dir: str, preset: str, ns: str) -> Path:
+    ns2 = _sanitize_ns(ns)
+    return Path(presets_dir) / preset / "bitmaps" / f"{ns2}.json"
+
+
+def _legacy_bitmaps_path(*, presets_dir: str, preset: str) -> Path:
+    return Path(presets_dir) / preset / "bitmaps.json"
+
+
 def load_bitmaps_from_preset(
-    *, presets_dir: str, preset: str, logger: Any
+    *, presets_dir: str, preset: str, ns: str, logger: Any
 ) -> dict[str, Any]:
-    path = Path(presets_dir) / preset / "bitmaps.json"
-    if not path.exists():
+    ns2 = _sanitize_ns(ns)
+    path = _bitmaps_path(presets_dir=presets_dir, preset=preset, ns=ns2)
+    legacy_path = _legacy_bitmaps_path(presets_dir=presets_dir, preset=preset)
+
+    read_path: Path | None = path if path.exists() else (legacy_path if legacy_path.exists() else None)
+    legacy_used = read_path == legacy_path
+    if read_path is None:
         doc = {
             "schema": BITMAPS_SCHEMA_V1,
             "meta": {},
@@ -59,7 +84,7 @@ def load_bitmaps_from_preset(
         }
         return {
             "schema": BITMAPS_SCHEMA_V1,
-            "meta": {"preset": preset, "missing": True},
+            "meta": {"preset": preset, "ns": ns2, "missing": True},
             "groups": {},
             "defaults": {},
             "count": 0,
@@ -68,9 +93,9 @@ def load_bitmaps_from_preset(
         }
 
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc = json.loads(read_path.read_text(encoding="utf-8"))
     except Exception as e:
-        logger.warning("bitmaps.json parse failed: %s (path=%s)", e, str(path))
+        logger.warning("bitmaps.json parse failed: %s (path=%s)", e, str(read_path))
         doc_out = {
             "schema": BITMAPS_SCHEMA_V1,
             "meta": {},
@@ -82,7 +107,7 @@ def load_bitmaps_from_preset(
         }
         return {
             "schema": BITMAPS_SCHEMA_V1,
-            "meta": {"preset": preset, "path": str(path), "invalid_json": True},
+            "meta": {"preset": preset, "ns": ns2, "path": str(read_path), "invalid_json": True, "legacy": legacy_used},
             "groups": {},
             "defaults": {},
             "count": 0,
@@ -91,7 +116,7 @@ def load_bitmaps_from_preset(
         }
 
     if not isinstance(doc, dict):
-        logger.warning("bitmaps.json root must be object (path=%s)", str(path))
+        logger.warning("bitmaps.json root must be object (path=%s)", str(read_path))
         doc_out = {
             "schema": BITMAPS_SCHEMA_V1,
             "meta": {},
@@ -103,7 +128,7 @@ def load_bitmaps_from_preset(
         }
         return {
             "schema": BITMAPS_SCHEMA_V1,
-            "meta": {"preset": preset, "path": str(path), "invalid_root": True},
+            "meta": {"preset": preset, "ns": ns2, "path": str(read_path), "invalid_root": True, "legacy": legacy_used},
             "groups": {},
             "defaults": {},
             "count": 0,
@@ -113,7 +138,7 @@ def load_bitmaps_from_preset(
 
     schema = doc.get("schema")
     if schema != BITMAPS_SCHEMA_V1:
-        logger.warning("bitmaps.json schema mismatch: %s (path=%s)", schema, str(path))
+        logger.warning("bitmaps.json schema mismatch: %s (path=%s)", schema, str(read_path))
         doc_out = {
             "schema": BITMAPS_SCHEMA_V1,
             "meta": {},
@@ -125,7 +150,14 @@ def load_bitmaps_from_preset(
         }
         return {
             "schema": BITMAPS_SCHEMA_V1,
-            "meta": {"preset": preset, "path": str(path), "invalid_schema": True, "found_schema": schema},
+            "meta": {
+                "preset": preset,
+                "ns": ns2,
+                "path": str(read_path),
+                "invalid_schema": True,
+                "found_schema": schema,
+                "legacy": legacy_used,
+            },
             "groups": {},
             "defaults": {},
             "count": 0,
@@ -242,7 +274,10 @@ def load_bitmaps_from_preset(
 
     meta_out = dict(meta)
     meta_out.setdefault("preset", preset)
-    meta_out.setdefault("path", str(path))
+    meta_out.setdefault("ns", ns2)
+    meta_out.setdefault("path", str(read_path))
+    if legacy_used:
+        meta_out.setdefault("legacy", True)
 
     return {
         "schema": BITMAPS_SCHEMA_V1,
@@ -263,7 +298,7 @@ def load_bitmaps_from_preset(
     }
 
 
-def save_bitmaps_to_preset(*, presets_dir: str, preset: str, logger: Any, document: Any) -> None:
+def save_bitmaps_to_preset(*, presets_dir: str, preset: str, ns: str, logger: Any, document: Any) -> None:
     if not isinstance(document, dict):
         raise ApiError("INVALID_BITMAPS", "bitmaps document must be an object", status_code=422)
 
@@ -389,7 +424,7 @@ def save_bitmaps_to_preset(*, presets_dir: str, preset: str, logger: Any, docume
         "ranges": ranges_out,
     }
 
-    path = Path(presets_dir) / preset / "bitmaps.json"
+    path = _bitmaps_path(presets_dir=presets_dir, preset=preset, ns=_sanitize_ns(ns))
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     try:

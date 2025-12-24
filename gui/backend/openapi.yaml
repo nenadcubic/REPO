@@ -5,6 +5,16 @@ info:
 servers:
   - url: /
 paths:
+  /api/v1/namespaces:
+    get:
+      operationId: namespaces
+      responses:
+        "200":
+          description: Allowed Redis namespaces (prefix families) from preset metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NamespacesResponse"
   /api/v1/config:
     get:
       operationId: config
@@ -18,6 +28,12 @@ paths:
   /api/v1/bitmaps:
     get:
       operationId: bitmaps
+      parameters:
+        - in: query
+          name: ns
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: Bit dictionary resolved from preset metadata
@@ -27,6 +43,12 @@ paths:
                 $ref: "#/components/schemas/BitmapsResponse"
     put:
       operationId: bitmapsPut
+      parameters:
+        - in: query
+          name: ns
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -59,6 +81,12 @@ paths:
   /api/v1/elements/put:
     post:
       operationId: elementsPut
+      parameters:
+        - in: query
+          name: ns
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -90,6 +118,11 @@ paths:
             minLength: 1
             maxLength: 100
         - in: query
+          name: ns
+          required: false
+          schema:
+            type: string
+        - in: query
           name: limit
           required: false
           schema:
@@ -119,6 +152,12 @@ paths:
   /api/v1/query:
     post:
       operationId: query
+      parameters:
+        - in: query
+          name: ns
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -141,6 +180,12 @@ paths:
   /api/v1/store:
     post:
       operationId: store
+      parameters:
+        - in: query
+          name: ns
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -168,6 +213,11 @@ paths:
           required: true
           schema:
             type: string
+        - in: query
+          name: ns
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: Delete store key
@@ -188,6 +238,11 @@ paths:
         - in: query
           name: store_key
           required: true
+          schema:
+            type: string
+        - in: query
+          name: ns
+          required: false
           schema:
             type: string
         - in: query
@@ -263,6 +318,9 @@ components:
       type: object
       required: [name, bits]
       properties:
+        ns:
+          type: string
+          nullable: true
         name:
           $ref: "#/components/schemas/Name"
         bits:
@@ -341,6 +399,9 @@ components:
         - type: object
           required: [type, bit]
           properties:
+            ns:
+              type: string
+              nullable: true
             type:
               const: find
             bit:
@@ -353,6 +414,9 @@ components:
         - type: object
           required: [type, bits]
           properties:
+            ns:
+              type: string
+              nullable: true
             type:
               const: find_all
             bits:
@@ -368,6 +432,9 @@ components:
         - type: object
           required: [type, bits]
           properties:
+            ns:
+              type: string
+              nullable: true
             type:
               const: find_any
             bits:
@@ -383,6 +450,9 @@ components:
         - type: object
           required: [type, include_bit, exclude_bits]
           properties:
+            ns:
+              type: string
+              nullable: true
             type:
               const: find_not
             include_bit:
@@ -400,6 +470,9 @@ components:
         - type: object
           required: [type, exclude_bits]
           properties:
+            ns:
+              type: string
+              nullable: true
             type:
               const: find_universe_not
             exclude_bits:
@@ -420,8 +493,10 @@ components:
           const: true
         data:
           type: object
-          required: [type, count, returned, limit, names]
+          required: [ns, type, count, returned, limit, names]
           properties:
+            ns:
+              type: string
             type:
               type: string
             count:
@@ -439,6 +514,9 @@ components:
         - type: object
           required: [type, ttl_sec, bits]
           properties:
+            ns:
+              type: string
+              nullable: true
             type:
               const: find_all_store
             ttl_sec:
@@ -453,6 +531,9 @@ components:
         - type: object
           required: [type, ttl_sec, bits]
           properties:
+            ns:
+              type: string
+              nullable: true
             type:
               const: find_any_store
             ttl_sec:
@@ -467,6 +548,9 @@ components:
         - type: object
           required: [type, ttl_sec, include_bit, exclude_bits]
           properties:
+            ns:
+              type: string
+              nullable: true
             type:
               const: find_not_store
             ttl_sec:
@@ -488,8 +572,10 @@ components:
           const: true
         data:
           type: object
-          required: [store_key, ttl_remaining, count, preview_limit, preview]
+          required: [ns, store_key, ttl_remaining, count, preview_limit, preview]
           properties:
+            ns:
+              type: string
             store_key:
               type: string
             ttl_remaining:
@@ -510,8 +596,10 @@ components:
           const: true
         data:
           type: object
-          required: [store_key, ttl_remaining, count, returned, limit, names]
+          required: [ns, store_key, ttl_remaining, count, returned, limit, names]
           properties:
+            ns:
+              type: string
             store_key:
               type: string
             ttl_remaining:
@@ -700,4 +788,35 @@ components:
           type: string
           nullable: true
         source:
+          type: string
+    NamespacesResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [schema, default, namespaces]
+          properties:
+            schema:
+              type: string
+            default:
+              type: string
+            namespaces:
+              type: array
+              items:
+                $ref: "#/components/schemas/NamespaceEntry"
+            meta:
+              type: object
+              additionalProperties: true
+    NamespaceEntry:
+      type: object
+      required: [id, label, prefix]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        prefix:
           type: string

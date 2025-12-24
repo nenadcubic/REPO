@@ -38,15 +38,19 @@ wait_for_health() {
   return 1
 }
 
-echo "[1/4] health"
+echo "[1/6] health"
 wait_for_health || fail "backend not healthy at $API_URL"
 json_get "/api/v1/health" | assert_ok_json
 
-echo "[2/4] config"
+echo "[2/6] namespaces"
+NS="$(json_get "/api/v1/namespaces" | python3 -c 'import json,sys;p=json.load(sys.stdin);d=p.get("data",{});print(d.get("default") or "er")')"
+test -n "$NS" || NS="er"
+
+echo "[3/6] config"
 json_get "/api/v1/config" | assert_ok_json
 
-echo "[3/5] bitmaps"
-json_get "/api/v1/bitmaps" | python3 -c '
+echo "[4/6] bitmaps"
+json_get "/api/v1/bitmaps?ns=$NS" | python3 -c '
 import json,sys
 p=json.load(sys.stdin)
 if not p.get("ok"):
@@ -57,11 +61,11 @@ if schema != "er.gui.bitmaps.v1":
   raise SystemExit(3)
 '
 
-echo "[4/5] put"
-json_post "/api/v1/elements/put" '{"name":"selftest_elem","bits":[0,1,7,8,4095]}' | assert_ok_json
+echo "[5/6] put"
+json_post "/api/v1/elements/put" '{"ns":"'"$NS"'","name":"selftest_elem","bits":[0,1,7,8,4095]}' | assert_ok_json
 
-echo "[5/5] get + assert bits"
-json_get "/api/v1/elements/get?name=selftest_elem&limit=4096" | python3 -c '
+echo "[6/6] get + assert bits"
+json_get "/api/v1/elements/get?ns=$NS&name=selftest_elem&limit=4096" | python3 -c '
 import json,sys
 p=json.load(sys.stdin)
 if not p.get("ok"):

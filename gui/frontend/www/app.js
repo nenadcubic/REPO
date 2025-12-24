@@ -9,13 +9,21 @@ const runtimeConfig = {
   backendVersion: "unknown",
 };
 
+const nsState = {
+  doc: null, // namespaces response data
+  options: [], // [{id,label,prefix}]
+  selectedId: "er",
+  selectedLabel: "Element-Redis",
+  selectedPrefix: "er",
+};
+
 const state = {
   error: null, // { type: "validation"|"request", message: string }
   locked: false, // true only while request in-flight
 };
 
-let bitmapsCache = null; // { meta, items, byBit: Map<number, item> }
-let bitmapsDoc = null; // raw document for editing (bitmaps.json)
+let bitmapsCache = null; // { ns, meta, items, byBit: Map<number, item> }
+let bitmapsDoc = null; // raw document for editing (bitmaps.json), scoped by ns
 
 const bitmapsUi = {
   editMode: false,
@@ -31,12 +39,16 @@ function disableAllInputs() {
   for (const el of document.querySelectorAll(".content input, .content select, .content textarea")) {
     el.disabled = true;
   }
+  const ns = $("nsSelect");
+  if (ns) ns.disabled = true;
 }
 
 function enableAllInputs() {
   for (const el of document.querySelectorAll(".content input, .content select, .content textarea")) {
     el.disabled = false;
   }
+  const ns = $("nsSelect");
+  if (ns) ns.disabled = false;
 }
 
 function disableAllButtons() {
@@ -187,6 +199,22 @@ function pretty(obj) {
   return JSON.stringify(obj, null, 2);
 }
 
+function selectedNsId() {
+  return String(nsState.selectedId || "er").trim() || "er";
+}
+
+function selectedNsPrefix() {
+  return String(nsState.selectedPrefix || "er").trim() || "er";
+}
+
+function withNsQuery(path) {
+  const ns = selectedNsId();
+  if (!ns) return path;
+  if (!path.startsWith("/api/v1/")) return path;
+  if (path.includes("ns=")) return path;
+  return path.includes("?") ? `${path}&ns=${encodeURIComponent(ns)}` : `${path}?ns=${encodeURIComponent(ns)}`;
+}
+
 function setActiveView(name) {
   for (const el of document.querySelectorAll(".nav-item")) {
     el.classList.toggle("active", el.dataset.view === name);
@@ -243,8 +271,9 @@ function setupTabGroups() {
 }
 
 async function fetchBitmaps({ force = false, silent = false } = {}) {
-  if (bitmapsCache && !force) return bitmapsCache;
-  const res = await apiJson("/api/v1/bitmaps");
+  const ns = selectedNsId();
+  if (bitmapsCache && bitmapsCache.ns === ns && !force) return bitmapsCache;
+  const res = await apiJson(withNsQuery("/api/v1/bitmaps"));
   if (!res.ok) {
     if (!silent) {
       state.error = { type: "request", message: res?.error?.message || "Request failed" };
@@ -264,13 +293,14 @@ function bitNameFor(bit) {
 }
 
 function applyBitmapsResponse(res) {
+  const ns = selectedNsId();
   const byBit = new Map();
   const items = Array.isArray(res?.data?.items) ? res.data.items : [];
   for (const it of items) {
     const bit = Number(it.bit);
     if (Number.isInteger(bit)) byBit.set(bit, it);
   }
-  bitmapsCache = { meta: res?.data?.meta || {}, items, byBit, raw: res?.data || {} };
+  bitmapsCache = { ns, meta: res?.data?.meta || {}, items, byBit, raw: res?.data || {} };
 
   const doc = res?.data?.document;
   if (doc && typeof doc === "object") {
@@ -389,7 +419,7 @@ async function putBitmapsDoc({ buttonEl, outEl }) {
     buttonEl,
     outEl,
     fn: async () => {
-      const out = await apiJson("/api/v1/bitmaps", { method: "PUT", body: JSON.stringify(bitmapsDoc) });
+      const out = await apiJson(withNsQuery("/api/v1/bitmaps"), { method: "PUT", body: JSON.stringify(bitmapsDoc) });
       if (!out.ok) {
         const msg = out?.error?.message || "Request failed";
         state.error = { type: "request", message: msg };
@@ -514,8 +544,11 @@ function renderBitmapsTable() {
   const missing = meta.missing ? " (missing)" : "";
   const schema = String(bitmapsCache.raw?.schema || "").trim();
   const preset = String(meta.preset || "").trim();
+  const ns = String(meta.ns || bitmapsCache.ns || "").trim();
+  const prefix = String(meta.prefix || selectedNsPrefix() || "").trim();
   const parts = [`Loaded: ${filtered.length}/${items.length}${missing}`];
   if (preset) parts.push(`Preset: ${preset}`);
+  if (ns) parts.push(`NS: ${ns}${prefix ? ` (${prefix}:*)` : ""}`);
   if (schema) parts.push(`Schema: ${schema}`);
   metaEl.textContent = parts.join(" • ");
 
@@ -841,6 +874,43 @@ function formatBytes(bytes) {
   return `${mb.toFixed(0)} MB`;
 }
 
+async function loadNamespaces() {
+  const selectEl = $("nsSelect");
+  if (!selectEl) return;
+
+  const res = await apiJson("/api/v1/namespaces");
+  if (!res.ok) {
+    showBanner("error", "⚠️ Unable to load namespaces. Using safe default.");
+    nsState.doc = { schema: "er.gui.namespaces.v1", default: "er", namespaces: [{ id: "er", label: "Element-Redis", prefix: "er" }] };
+  } else {
+    nsState.doc = res.data;
+  }
+
+  const list = Array.isArray(nsState.doc?.namespaces) ? nsState.doc.namespaces : [];
+  const def = String(nsState.doc?.default || "er").trim() || "er";
+
+  const opts = list
+    .filter((x) => x && typeof x === "object" && typeof x.id === "string" && typeof x.prefix === "string")
+    .map((x) => ({ id: String(x.id).trim(), label: String(x.label || x.id).trim(), prefix: String(x.prefix).trim() }))
+    .filter((x) => x.id && x.prefix);
+
+  if (!opts.length) opts.push({ id: "er", label: "Element-Redis", prefix: "er" });
+  nsState.options = opts;
+
+  const saved = String(localStorage.getItem("er_gui_ns") || "").trim();
+  const selected = opts.some((o) => o.id === saved) ? saved : (opts.some((o) => o.id === def) ? def : opts[0].id);
+
+  selectEl.innerHTML = opts
+    .map((o) => `<option value="${escapeHtml(o.id)}">${escapeHtml(`${o.label} (${o.prefix}:*)`)}</option>`)
+    .join("");
+  selectEl.value = selected;
+
+  const ent = opts.find((o) => o.id === selected) || opts[0];
+  nsState.selectedId = ent.id;
+  nsState.selectedLabel = ent.label;
+  nsState.selectedPrefix = ent.prefix;
+}
+
 async function loadConfig() {
   const cfg = await apiJson("/api/v1/config");
   if (!cfg.ok) {
@@ -888,6 +958,7 @@ async function refreshHealth() {
         `Redis: ${redisOk}\n` +
         `Ping: ${r.ping_ms} ms\n` +
         `Memory Used: ${formatBytes(r.used_memory)}\n` +
+        `Namespace: ${nsState.selectedId} (${selectedNsPrefix()}:*)\n` +
         `Backend Version: v${h.data.backend_version}\n` +
         `Preset: ${h.data.preset}\n`;
 
@@ -917,7 +988,10 @@ async function doPut() {
     buttonEl: $("btnPut"),
     outEl: $("putOut"),
     fn: async () => {
-      const out = await apiJson("/api/v1/elements/put", { method: "POST", body: JSON.stringify({ name, bits }) });
+      const out = await apiJson(withNsQuery("/api/v1/elements/put"), {
+        method: "POST",
+        body: JSON.stringify({ name, bits }),
+      });
       if (!out.ok) {
         const msg = out?.error?.message || "Request failed";
         state.error = { type: "request", message: msg };
@@ -953,7 +1027,9 @@ async function doGet() {
     buttonEl: $("btnGet"),
     outEl: $("getOut"),
     fn: async () => {
-      const out = await apiJson(`/api/v1/elements/get?name=${encodeURIComponent(name)}&limit=${encodeURIComponent(limit)}`);
+      const out = await apiJson(
+        withNsQuery(`/api/v1/elements/get?name=${encodeURIComponent(name)}&limit=${encodeURIComponent(limit)}`)
+      );
       if (!out.ok) {
         lastGetBits = [];
         state.error = { type: "request", message: out?.error?.message || "Request failed" };
@@ -1020,7 +1096,7 @@ async function doQuery() {
     buttonEl: $("btnQuery"),
     outEl: $("queryOut"),
     fn: async () => {
-      const out = await apiJson("/api/v1/query", { method: "POST", body: JSON.stringify(body) });
+      const out = await apiJson(withNsQuery("/api/v1/query"), { method: "POST", body: JSON.stringify(body) });
       if (!out.ok) {
         const msg = out?.error?.message || "Request failed";
         state.error = { type: "request", message: msg };
@@ -1078,7 +1154,7 @@ async function doStore() {
     buttonEl: $("btnStore"),
     outEl: $("storeOut"),
     fn: async () => {
-      const out = await apiJson("/api/v1/store", { method: "POST", body: JSON.stringify(body) });
+      const out = await apiJson(withNsQuery("/api/v1/store"), { method: "POST", body: JSON.stringify(body) });
       if (!out.ok) {
         state.error = { type: "request", message: out?.error?.message || "Request failed" };
         showBanner("error", "⚠️ Failed to store result. Please check backend logs.");
@@ -1119,7 +1195,7 @@ async function doInspect() {
     outEl: $("inspectOut"),
     fn: async () => {
       const out = await apiJson(
-        `/api/v1/store/inspect?store_key=${encodeURIComponent(store_key)}&limit=${encodeURIComponent(limit)}`
+        withNsQuery(`/api/v1/store/inspect?store_key=${encodeURIComponent(store_key)}&limit=${encodeURIComponent(limit)}`)
       );
       if (!out.ok) {
         state.error = { type: "request", message: out?.error?.message || "Request failed" };
@@ -1152,7 +1228,9 @@ async function doDeleteStore() {
     buttonEl: $("btnDeleteStore"),
     outEl: $("inspectOut"),
     fn: async () => {
-      const out = await apiJson(`/api/v1/store?store_key=${encodeURIComponent(store_key)}`, { method: "DELETE" });
+      const out = await apiJson(withNsQuery(`/api/v1/store?store_key=${encodeURIComponent(store_key)}`), {
+        method: "DELETE",
+      });
       if (!out.ok) {
         state.error = { type: "request", message: out?.error?.message || "Request failed" };
         showBanner("error", out?.error?.message || "Request failed");
@@ -1210,6 +1288,30 @@ async function copyText(text) {
 }
 
 function setupActions() {
+  $("nsSelect").addEventListener("change", async () => {
+    if (state.locked) return;
+    clearErrorState();
+    const next = String($("nsSelect").value || "").trim();
+    const ent = (nsState.options || []).find((o) => o.id === next);
+    if (!ent) {
+      showBanner("error", "Invalid value.");
+      return;
+    }
+    nsState.selectedId = ent.id;
+    nsState.selectedLabel = ent.label;
+    nsState.selectedPrefix = ent.prefix;
+    localStorage.setItem("er_gui_ns", ent.id);
+
+    bitmapsCache = null;
+    bitmapsDoc = null;
+    closeBitmapsItemEditor();
+    renderBitmapsTable();
+    renderBitmapsGroups();
+    await fetchBitmaps({ silent: true });
+    renderBitmapsTable();
+    await refreshHealth();
+  });
+
   $("btnStatusRefresh").addEventListener("click", refreshHealth);
   $("btnPut").addEventListener("click", doPut);
   $("btnGet").addEventListener("click", doGet);
@@ -1340,7 +1442,7 @@ function setupActions() {
       outEl: $("matrixMeta"),
       fn: async () => {
         await fetchBitmaps({ silent: true });
-        const out = await apiJson(`/api/v1/elements/get?name=${encodeURIComponent(name)}&limit=4096`);
+        const out = await apiJson(withNsQuery(`/api/v1/elements/get?name=${encodeURIComponent(name)}&limit=4096`));
         if (!out.ok) {
           state.error = { type: "request", message: out?.error?.message || "Request failed" };
           showBanner("error", out?.error?.code === "NOT_FOUND" ? "⚠️ No element found with that name." : (out?.error?.message || "Request failed"));
@@ -1378,6 +1480,12 @@ function setupErrorResetOnInput() {
       clearErrorState();
     });
   }
+  const ns = $("nsSelect");
+  if (ns) {
+    ns.addEventListener("change", () => {
+      clearErrorState();
+    });
+  }
 }
 
 setupNav();
@@ -1387,6 +1495,7 @@ setupErrorResetOnInput();
 setActiveView("status");
 
 async function init() {
+  await loadNamespaces();
   await loadConfig();
   await fetchBitmaps({ silent: true });
   renderBitmapsGroups();

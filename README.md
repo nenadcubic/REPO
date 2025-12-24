@@ -34,7 +34,10 @@ docker compose version
 │   │   ├── dev.env
 │   │   ├── demo.env
 │   │   └── default/
-│   │       └── bitmaps.json
+│   │       ├── namespaces.json
+│   │       └── bitmaps/
+│   │           ├── er.json
+│   │           └── or.json
 │   └── README.md
 └── README.md           # (this file)
 ```
@@ -73,6 +76,8 @@ You should see a dark-themed web interface with a sidebar:
 - Store + TTL
 - Logs
 - Bit-maps
+
+Use the Namespace selector in the header to switch between allowed Redis prefix families (for example `er:*` vs `or:*`).
 
 ## 5. Verifying the System (Recommended)
 
@@ -151,7 +156,7 @@ Open Bit-maps tab to see:
 
 This metadata is loaded from:
 
-- gui/presets/default/bitmaps.json
+- gui/presets/default/bitmaps/er.json
 
 It is human-readable and editable via the GUI.
 

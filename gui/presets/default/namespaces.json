@@ -1,0 +1,9 @@
+{
+  "schema": "er.gui.namespaces.v1",
+  "default": "er",
+  "namespaces": [
+    { "id": "er", "label": "Element-Redis", "prefix": "er" },
+    { "id": "or", "label": "Oracle-Redis", "prefix": "or" }
+  ]
+}
+

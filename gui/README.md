@@ -9,7 +9,10 @@ UI copy contract (GUI-freeze-v1):
 - `gui/GUI_COPY.md`
 
 Bit dictionary (preset metadata):
-- `gui/presets/<GUI_PRESET>/bitmaps.json`
+- `gui/presets/<GUI_PRESET>/bitmaps/<ns>.json`
+
+Namespaces (preset metadata):
+- `gui/presets/<GUI_PRESET>/namespaces.json`
 
 ## Run
 
@@ -44,10 +47,14 @@ All endpoints are versioned under `/api/v1` and return:
 OpenAPI 3.1:
 - `gui/backend/openapi.yaml`
 
+Namespace selection:
+- Allowed namespaces are exposed via `GET /api/v1/namespaces`.
+- Element/query/store endpoints accept `ns` (namespace id) to select a Redis prefix family (for example `er:*` vs `or:*`).
+
 ## Bit-maps
 
-- Backend loads `bitmaps.json` from the selected preset directory and exposes it via `GET /api/v1/bitmaps`.
-- Edit mode saves updates back to `gui/presets/<GUI_PRESET>/bitmaps.json` via `PUT /api/v1/bitmaps` (metadata-only; no Redis operations).
+- Backend loads namespace-scoped bit-maps from `gui/presets/<GUI_PRESET>/bitmaps/<ns>.json` and exposes it via `GET /api/v1/bitmaps?ns=...`.
+- Edit mode saves updates back to `gui/presets/<GUI_PRESET>/bitmaps/<ns>.json` via `PUT /api/v1/bitmaps?ns=...` (metadata-only; no Redis operations).
 - `bitmaps.json` `defaults.format` is reserved for future use (not active in v1); hover tooltip text is fixed to `NAME: 0` / `NAME: 1`.
 - The GUI caches bit-maps in memory (no per-hover requests).
 

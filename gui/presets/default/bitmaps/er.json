@@ -1,0 +1,27 @@
+{
+  "schema": "er.gui.bitmaps.v1",
+  "meta": {
+    "name": "Element-Redis bit-maps (default)",
+    "version": 1,
+    "updated_utc": "2025-12-24T00:00:00Z"
+  },
+  "groups": {
+    "status": { "label": "Status", "order": 10, "color": "blue" },
+    "risk": { "label": "Risk", "order": 20, "color": "red" }
+  },
+  "labels": { "UNNAMED_PREFIX": "Bit", "UNKNOWN_NAME": "UNKNOWN" },
+  "defaults": {
+    "group": "status",
+    "format": "{name}: {value}",
+    "missing_name_format": "{labels.UNNAMED_PREFIX} {bit}: {value}"
+  },
+  "items": [
+    { "bit": 0, "key": "IS_ACTIVE", "name": "Active", "group": "status", "description": "Element is active." },
+    { "bit": 1, "key": "IS_VERIFIED", "name": "Verified", "group": "status", "description": "Element is verified." },
+    { "bit": 7, "key": "HAS_FLAG_7", "name": "Flag 7", "group": "status", "description": "Example flag." }
+  ],
+  "ranges": [
+    { "from": 100, "to": 109, "group": "risk", "name_prefix": "RISK_", "format": "{name}: {value}" }
+  ]
+}
+
