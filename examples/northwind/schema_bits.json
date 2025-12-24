@@ -1,0 +1,10 @@
+{
+  "customers": {
+    "country": {
+      "Germany": 0,
+      "France": 1,
+      "UK": 2
+    }
+  }
+}
+

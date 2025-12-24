@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>element-redis GUI</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="sidebar-title">element-redis</div>
+          <div class="sidebar-sub">GUI sandbox</div>
+        </div>
+
+        <nav class="nav">
+          <button class="nav-item active" data-view="status">Status</button>
+          <button class="nav-item" data-view="elements">Elements</button>
+          <button class="nav-item" data-view="queries">Queries</button>
+          <button class="nav-item" data-view="store">Store + TTL</button>
+          <button class="nav-item" data-view="logs">Logs</button>
+          <button class="nav-item" data-view="bitmaps">Bit-maps</button>
+        </nav>
+
+        <div class="sidebar-foot">
+          <div class="muted">
+            API: <code>/api/v1</code><br />
+            OpenAPI: <code>gui/backend/openapi.yaml</code>
+          </div>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="header">
+          <div id="viewTitle" class="header-title">Status</div>
+          <div class="header-sub">Thin UI (GUI-freeze-v1)</div>
+        </header>
+
+        <main class="content">
+          <div id="banner" class="banner hidden" role="status" aria-live="polite"></div>
+          <section id="view-status" class="view active">
+            <div class="desc">Overview of backend, Redis, and preset configuration.</div>
+            <div class="row">
+              <button id="btnStatusRefresh" class="btn primary">Refresh Status</button>
+            </div>
+            <div class="grid2">
+              <div class="panel">
+                <div class="panel-title">Backend</div>
+                <pre id="backendStatus" class="out"></pre>
+              </div>
+              <div class="panel">
+                <div class="panel-title">Redis</div>
+                <pre id="redisStatus" class="out"></pre>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-elements" class="view">
+            <div class="desc">Create, update, or retrieve an Element by name.</div>
+            <div class="tabs tabs-inline">
+              <button class="tab active" data-tabgroup="elements" data-tab="elements-put">Put</button>
+              <button class="tab" data-tabgroup="elements" data-tab="elements-get">Get</button>
+              <button class="tab" data-tabgroup="elements" data-tab="elements-matrix">Matrix</button>
+            </div>
+
+            <div id="elements-put" class="tabpane active" data-tabgroup="elements">
+              <div class="subhead">Create or Update Element</div>
+              <label class="label">Element Name (max 100 characters)</label>
+              <input id="putName" class="input" placeholder="alice" />
+              <label class="label">Bits (comma or space separated, e.g. 1, 5, 1023)</label>
+              <input
+                id="putBits"
+                class="input"
+                placeholder="1 7 42"
+                title="Enter bit indices from 0 to 4095. Separate by space or comma. Duplicates and invalid entries will be removed."
+              />
+              <div class="help">
+                Enter bit indices from 0 to 4095. Separate by space or comma. Duplicates and invalid entries will be removed.
+              </div>
+              <div class="row">
+                <button id="btnPut" class="btn primary">Save Element</button>
+              </div>
+              <div class="panel">
+                <div class="panel-title">Result</div>
+                <pre id="putOut" class="out"></pre>
+              </div>
+            </div>
+
+            <div id="elements-get" class="tabpane" data-tabgroup="elements">
+              <div class="subhead">Retrieve Element by Name</div>
+              <label class="label">Element Name</label>
+              <input id="getName" class="input" placeholder="alice" />
+              <label class="label">Limit</label>
+              <input id="getLimit" class="input" placeholder="200" />
+              <div class="row">
+                <button id="btnGet" class="btn primary">Fetch Element</button>
+                <button id="btnCopyBitsCsv" class="btn">Copy as CSV</button>
+                <button id="btnCopyBitsList" class="btn">Copy as List</button>
+              </div>
+              <div class="panel">
+                <div class="panel-title">Result</div>
+                <pre id="getOut" class="out"></pre>
+              </div>
+            </div>
+
+            <div id="elements-matrix" class="tabpane" data-tabgroup="elements">
+              <div class="subhead">Show Element (Matrix View)</div>
+              <div class="help">Hover a cell to see the bit name and value. No requests are made per hover.</div>
+              <label class="label">Element Name</label>
+              <input id="matrixName" class="input" placeholder="alice" />
+              <div class="row">
+                <button id="btnMatrixFetch" class="btn primary">Fetch Element</button>
+              </div>
+              <div class="panel">
+                <div class="panel-title">Matrix</div>
+                <div id="matrixMeta" class="help"></div>
+                <div class="matrix-wrap">
+                  <canvas id="matrixCanvas" class="matrix-canvas" width="512" height="512"></canvas>
+                  <div id="matrixTooltip" class="tooltip hidden"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-queries" class="view">
+            <div class="desc">Find matching Elements based on bit filters. Results are limited by default.</div>
+            <div class="tabs tabs-inline">
+              <button class="tab active" data-tabgroup="queries" data-tab="q-find">Find</button>
+              <button class="tab" data-tabgroup="queries" data-tab="q-find-all">Find ALL</button>
+              <button class="tab" data-tabgroup="queries" data-tab="q-find-any">Find ANY</button>
+              <button class="tab" data-tabgroup="queries" data-tab="q-find-not">Find NOT</button>
+              <button class="tab" data-tabgroup="queries" data-tab="q-find-unot">Universe NOT</button>
+            </div>
+
+            <label class="label">Limit</label>
+            <input id="queryLimit" class="input" placeholder="200" />
+
+            <div id="q-find" class="tabpane active" data-tabgroup="queries">
+              <div class="help">Find all elements that contain this bit.</div>
+              <label class="label">Bit</label>
+              <input id="qBit" class="input" placeholder="42" />
+            </div>
+            <div id="q-find-all" class="tabpane" data-tabgroup="queries">
+              <div class="help">Find elements that contain all of the specified bits.</div>
+              <label class="label">Bits</label>
+              <input id="qBitsAll" class="input" placeholder="1 42" />
+            </div>
+            <div id="q-find-any" class="tabpane" data-tabgroup="queries">
+              <div class="help">Find elements that contain at least one of the specified bits.</div>
+              <label class="label">Bits</label>
+              <input id="qBitsAny" class="input" placeholder="7 42" />
+            </div>
+            <div id="q-find-not" class="tabpane" data-tabgroup="queries">
+              <div class="help">Find elements that contain Include Bit, but none of the Exclude Bits.</div>
+              <label class="label">Include Bit</label>
+              <input id="qIncludeBit" class="input" placeholder="42" />
+              <label class="label">Exclude Bits</label>
+              <input id="qExcludeBits" class="input" placeholder="7 9" />
+            </div>
+            <div id="q-find-unot" class="tabpane" data-tabgroup="queries">
+              <div class="help">Find all elements that do not contain any of the given bits.</div>
+              <label class="label">Exclude Bits</label>
+              <input id="qExcludeUniverseBits" class="input" placeholder="7 9" />
+            </div>
+
+            <div class="row">
+              <button id="btnQuery" class="btn primary">Run Query</button>
+              <button id="btnCopyNamesList" class="btn">Copy Results</button>
+              <button id="btnCopyNamesCsv" class="btn">Copy as CSV</button>
+            </div>
+
+            <div class="grid2">
+              <div class="panel">
+                <div class="panel-title">Envelope</div>
+                <pre id="queryOut" class="out"></pre>
+              </div>
+              <div class="panel">
+                <div class="panel-title">Names</div>
+                <pre id="queryNames" class="out"></pre>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-store" class="view">
+            <div class="desc">Store query results in Redis with expiry, then inspect by Store Key.</div>
+            <div class="tabs tabs-inline">
+              <button class="tab active" data-tabgroup="store-main" data-tab="store-create">Create</button>
+              <button class="tab" data-tabgroup="store-main" data-tab="store-inspect">Inspect</button>
+            </div>
+
+            <div id="store-create" class="tabpane active" data-tabgroup="store-main">
+              <div class="tabs tabs-inline">
+                <button class="tab active" data-tabgroup="store-create" data-tab="sc-all">Find ALL + TTL</button>
+                <button class="tab" data-tabgroup="store-create" data-tab="sc-any">Find ANY + TTL</button>
+                <button class="tab" data-tabgroup="store-create" data-tab="sc-not">Find NOT + TTL</button>
+              </div>
+
+              <label class="label">TTL (seconds)</label>
+              <input id="storeTtl" class="input" placeholder="60" value="60" />
+              <div class="help">How long to keep this result in Redis. Default is 60 seconds.</div>
+
+              <div id="sc-all" class="tabpane active" data-tabgroup="store-create">
+                <label class="label">Bits</label>
+                <input id="storeBitsAll" class="input" placeholder="1 42" />
+              </div>
+              <div id="sc-any" class="tabpane" data-tabgroup="store-create">
+                <label class="label">Bits</label>
+                <input id="storeBitsAny" class="input" placeholder="7 42" />
+              </div>
+              <div id="sc-not" class="tabpane" data-tabgroup="store-create">
+                <label class="label">Include Bit</label>
+                <input id="storeIncludeBit" class="input" placeholder="42" />
+                <label class="label">Exclude Bits</label>
+                <input id="storeExcludeBits" class="input" placeholder="7 9" />
+              </div>
+
+              <div class="row">
+                <button id="btnStore" class="btn primary">Store Results</button>
+              </div>
+              <div class="panel">
+                <div class="panel-title">Result</div>
+                <pre id="storeOut" class="out"></pre>
+              </div>
+            </div>
+
+            <div id="store-inspect" class="tabpane" data-tabgroup="store-main">
+              <div class="subhead">Inspect Stored Result</div>
+              <label class="label">store_key</label>
+              <input id="inspectKey" class="input" placeholder="er:tmp:..." />
+              <label class="label">Limit</label>
+              <input id="inspectLimit" class="input" placeholder="200" />
+              <div class="row">
+                <button id="btnInspect" class="btn primary">Refresh</button>
+                <button id="btnDeleteStore" class="btn danger">Delete Store Key</button>
+              </div>
+              <div class="panel">
+                <div class="panel-title">Result</div>
+                <pre id="inspectOut" class="out"></pre>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-logs" class="view">
+            <div class="desc">Backend logs (read-only).</div>
+            <label class="label">Tail last N lines</label>
+            <input id="logsTail" class="input" placeholder="200" />
+            <div class="row">
+              <button id="btnLogs" class="btn primary">Refresh</button>
+            </div>
+            <div class="panel">
+              <div class="panel-title">Result</div>
+              <pre id="logsOut" class="out"></pre>
+            </div>
+          </section>
+
+          <section id="view-bitmaps" class="view">
+            <div class="desc">Browse the bit dictionary loaded from the selected preset.</div>
+            <label class="label">Search</label>
+            <input id="bitmapsSearch" class="input" placeholder="Search by bit, key, name, group, description" />
+            <div class="row">
+              <button id="btnBitmapsRefresh" class="btn">Refresh</button>
+              <label class="label" style="margin: 0; display: flex; align-items: center; gap: 8px">
+                <input id="bitmapsEditMode" type="checkbox" />
+                Edit mode
+              </label>
+            </div>
+            <div class="grid2">
+              <div class="panel">
+                <div class="panel-title">Bit-maps</div>
+                <div id="bitmapsMeta" class="help"></div>
+                <div class="table-wrap">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th>Bit</th>
+                        <th>Key</th>
+                        <th>Name</th>
+                        <th>Group</th>
+                        <th>Description</th>
+                      </tr>
+                    </thead>
+                    <tbody id="bitmapsTbody"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div id="bitmapsItemPanel" class="panel hidden">
+                <div class="panel-title">Edit Bit-map Item</div>
+                <div class="help">Bit is read-only. Saving creates or updates an explicit item for this bit.</div>
+                <label class="label">Bit</label>
+                <input id="bmEditBit" class="input" disabled />
+                <label class="label">Group</label>
+                <select id="bmEditGroup" class="input"></select>
+                <label class="label">Name</label>
+                <input id="bmEditName" class="input" placeholder="(optional)" />
+                <label class="label">Key</label>
+                <input id="bmEditKey" class="input" placeholder="(optional)" />
+                <label class="label">Description</label>
+                <textarea id="bmEditDesc" class="input" rows="3" placeholder="(optional)"></textarea>
+                <div class="row">
+                  <button id="btnBmItemSave" class="btn primary">Save</button>
+                  <button id="btnBmItemCancel" class="btn">Cancel</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="bitmapsEditOnly" class="grid2 hidden">
+              <div class="panel">
+                <div class="panel-title">Groups</div>
+                <div class="help">Groups define the allowed values for the item Group dropdown.</div>
+                <label class="label">Default group</label>
+                <div class="row">
+                  <select id="bmDefaultGroup" class="input"></select>
+                  <button id="btnBmDefaultGroupSave" class="btn">Save</button>
+                </div>
+                <div class="table-wrap">
+                  <table class="table" style="min-width: 520px">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Label</th>
+                        <th>Order</th>
+                        <th>Color</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody id="bmGroupsTbody"></tbody>
+                  </table>
+                </div>
+
+                <div class="subhead">Add / Edit group</div>
+                <label class="label">ID (key)</label>
+                <input id="bmGroupId" class="input" placeholder="status" />
+                <label class="label">Label</label>
+                <input id="bmGroupLabel" class="input" placeholder="Status" />
+                <label class="label">Order</label>
+                <input id="bmGroupOrder" class="input" placeholder="10" />
+                <label class="label">Color (optional)</label>
+                <input id="bmGroupColor" class="input" placeholder="blue" />
+                <div class="row">
+                  <button id="btnBmGroupSave" class="btn primary">Save</button>
+                  <button id="btnBmGroupCancel" class="btn">Cancel</button>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-title">Bulk assign</div>
+                <div class="help">
+                  Lines like: <code>status: 1 2 3</code>, <code>risk: 100-199</code>, <code>risk: 100..199</code>
+                </div>
+                <label class="label">Input</label>
+                <textarea
+                  id="bmBulkText"
+                  class="input"
+                  rows="8"
+                  placeholder="status: 1 2 3&#10;risk: 100-109"
+                ></textarea>
+                <div class="row">
+                  <label class="label" style="margin: 0; display: flex; align-items: center; gap: 8px">
+                    <input id="bmBulkAutoname" type="checkbox" />
+                    Autoname newly created items
+                  </label>
+                </div>
+                <div class="row">
+                  <button id="btnBmBulkApply" class="btn primary">Apply</button>
+                </div>
+                <div class="panel">
+                  <div class="panel-title">Summary</div>
+                  <pre id="bmBulkOut" class="out"></pre>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

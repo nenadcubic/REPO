@@ -1,1 +1,9 @@
 /build/
+/build_verify/
+/build_local/
+.relay/
+/relay/
+examples/northwind/northwind.sqlite
+examples/northwind/*.sqlite
+__pycache__/
+*.pyc
