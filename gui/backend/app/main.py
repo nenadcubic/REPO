@@ -17,6 +17,7 @@ from .redis_bits import decode_flags_bin, element_key_with_prefix
 from .settings import load_settings
 from .bitmaps import load_bitmaps_from_preset, save_bitmaps_to_preset
 from .namespaces import load_namespaces_from_preset, namespaces_to_map
+from .namespace_discovery import DiscoveryLimits, discover_namespaces, write_namespaces_generated
 
 
 BACKEND_VERSION = "0.1.0"
@@ -141,6 +142,24 @@ async def config() -> dict[str, Any]:
 async def namespaces() -> dict[str, Any]:
     data = load_namespaces_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
     return ok(data)
+
+@app.get("/api/v1/namespaces/discover")
+async def namespaces_discover(
+    max_keys: int = 50000,
+    sample_per_prefix: int = 200,
+    scan_count: int = 1000,
+    write: int = 0,
+) -> dict[str, Any]:
+    r = redis_client()
+    discovery = discover_namespaces(
+        r=r, limits=DiscoveryLimits(max_keys=max_keys, sample_per_prefix=sample_per_prefix, scan_count=scan_count)
+    )
+    out: dict[str, Any] = dict(discovery)
+    if int(write) == 1:
+        out["export"] = write_namespaces_generated(
+            presets_dir=settings.presets_dir, preset=settings.gui_preset, discovery=discovery, logger=logger
+        )
+    return ok(out)
 
 
 @app.get("/api/v1/bitmaps")

@@ -60,6 +60,30 @@
                 <pre id="redisStatus" class="out"></pre>
               </div>
             </div>
+
+            <div class="panel">
+              <div class="panel-title">Admin / Settings</div>
+              <div class="help">Discover namespaces by scanning Redis keys (read-only, SCAN only).</div>
+              <div class="row">
+                <button id="btnNsDiscover" class="btn primary">Discover namespaces</button>
+                <button id="btnNsExport" class="btn">Export suggestion</button>
+              </div>
+              <div id="nsDiscoverMeta" class="help"></div>
+              <div class="table-wrap">
+                <table class="table" style="min-width: 820px">
+                  <thead>
+                    <tr>
+                      <th>Prefix</th>
+                      <th>Confidence</th>
+                      <th>Total Keys</th>
+                      <th>Evidence</th>
+                      <th>Suggested Layout</th>
+                    </tr>
+                  </thead>
+                  <tbody id="nsDiscoverTbody"></tbody>
+                </table>
+              </div>
+            </div>
           </section>
 
           <section id="view-elements" class="view">

@@ -35,6 +35,8 @@ const matrixState = {
   bitSet: null, // Set<number>
 };
 
+let nsDiscoverCache = null;
+
 function disableAllInputs() {
   for (const el of document.querySelectorAll(".content input, .content select, .content textarea")) {
     el.disabled = true;
@@ -874,6 +876,51 @@ function formatBytes(bytes) {
   return `${mb.toFixed(0)} MB`;
 }
 
+function downloadJson(filename, obj) {
+  const text = JSON.stringify(obj, null, 2) + "\n";
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function renderNsDiscover() {
+  const meta = $("nsDiscoverMeta");
+  const tbody = $("nsDiscoverTbody");
+  if (!meta || !tbody) return;
+  if (!nsDiscoverCache) {
+    meta.textContent = "";
+    tbody.innerHTML = "";
+    return;
+  }
+
+  meta.textContent = `Seen keys: ${nsDiscoverCache.seen_keys} • Prefixes: ${(nsDiscoverCache.prefixes || []).length}`;
+
+  const prefixes = Array.isArray(nsDiscoverCache.prefixes) ? nsDiscoverCache.prefixes : [];
+  tbody.innerHTML = prefixes
+    .map((p) => {
+      const prefix = escapeHtml(String(p.prefix || ""));
+      const conf = Number(p.confidence ?? 0);
+      const pct = `${Math.round(conf * 100)}%`;
+      const total = p?.evidence?.counts?.total_keys ?? "";
+      const patterns = p?.evidence?.counts?.patterns || {};
+      const ev =
+        `element:${patterns.element ?? 0} ` +
+        `idx_bit:${patterns.idx_bit ?? 0} ` +
+        `tmp:${patterns.tmp ?? 0} ` +
+        `universe:${patterns.universe ?? 0}`;
+      const tpl = p?.suggested_layout?.key_templates || null;
+      const layout = tpl ? `<code>${escapeHtml(`${tpl.element}`)}</code>` : `<span class="muted">unknown</span>`;
+      return `<tr><td><code>${prefix}</code></td><td>${pct}</td><td>${escapeHtml(String(total))}</td><td>${escapeHtml(ev)}</td><td>${layout}</td></tr>`;
+    })
+    .join("");
+}
+
 async function loadNamespaces() {
   const selectEl = $("nsSelect");
   if (!selectEl) return;
@@ -1313,6 +1360,48 @@ function setupActions() {
   });
 
   $("btnStatusRefresh").addEventListener("click", refreshHealth);
+
+  $("btnNsDiscover").addEventListener("click", async () => {
+    if (state.locked) return;
+    await withRequest({
+      buttonEl: $("btnNsDiscover"),
+      outEl: $("backendStatus"),
+      fn: async () => {
+        const out = await apiJson("/api/v1/namespaces/discover?max_keys=50000&sample_per_prefix=200&scan_count=1000");
+        if (!out.ok) {
+          const msg = out?.error?.message || "Request failed";
+          state.error = { type: "request", message: msg };
+          showBanner("error", msg);
+          return;
+        }
+        nsDiscoverCache = out.data;
+        renderNsDiscover();
+        showBanner("success", "Discovery completed");
+      },
+    });
+  });
+
+  $("btnNsExport").addEventListener("click", async () => {
+    if (state.locked) return;
+    await withRequest({
+      buttonEl: $("btnNsExport"),
+      outEl: $("backendStatus"),
+      fn: async () => {
+        const out = await apiJson("/api/v1/namespaces/discover?max_keys=50000&sample_per_prefix=200&scan_count=1000&write=1");
+        if (!out.ok) {
+          const msg = out?.error?.message || "Request failed";
+          state.error = { type: "request", message: msg };
+          showBanner("error", msg);
+          return;
+        }
+        nsDiscoverCache = out.data;
+        renderNsDiscover();
+        const doc = out?.data?.export?.document || null;
+        if (doc) downloadJson("namespaces.generated.json", doc);
+        showBanner("success", "Exported namespaces.generated.json");
+      },
+    });
+  });
   $("btnPut").addEventListener("click", doPut);
   $("btnGet").addEventListener("click", doGet);
   $("btnQuery").addEventListener("click", doQuery);
@@ -1501,6 +1590,7 @@ async function init() {
   renderBitmapsGroups();
   setBitmapsEditMode(!!$("bitmapsEditMode")?.checked);
   await refreshHealth();
+  renderNsDiscover();
   const search = $("bitmapsSearch");
   if (search) search.addEventListener("input", () => renderBitmapsTable());
   setupMatrixHover();

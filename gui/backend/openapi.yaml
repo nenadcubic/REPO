@@ -15,6 +15,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NamespacesResponse"
+  /api/v1/namespaces/discover:
+    get:
+      operationId: namespacesDiscover
+      parameters:
+        - in: query
+          name: max_keys
+          required: false
+          schema:
+            type: integer
+            default: 50000
+            minimum: 1
+            maximum: 500000
+        - in: query
+          name: sample_per_prefix
+          required: false
+          schema:
+            type: integer
+            default: 200
+            minimum: 1
+            maximum: 2000
+        - in: query
+          name: scan_count
+          required: false
+          schema:
+            type: integer
+            default: 1000
+            minimum: 1
+            maximum: 10000
+        - in: query
+          name: write
+          required: false
+          schema:
+            type: integer
+            default: 0
+            enum: [0, 1]
+      responses:
+        "200":
+          description: Read-only Redis namespace discovery (SCAN + TYPE sampling)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NamespacesDiscoverResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/config:
     get:
       operationId: config
@@ -820,3 +868,45 @@ components:
           type: string
         prefix:
           type: string
+    NamespacesDiscoverResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          $ref: "#/components/schemas/NamespacesDiscoverData"
+    NamespacesDiscoverData:
+      type: object
+      required: [schema, generated_utc, limits, seen_keys, prefixes]
+      properties:
+        schema:
+          type: string
+        generated_utc:
+          type: string
+        limits:
+          type: object
+          additionalProperties: true
+        seen_keys:
+          type: integer
+        prefixes:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiscoveredPrefix"
+        export:
+          type: object
+          additionalProperties: true
+    DiscoveredPrefix:
+      type: object
+      required: [prefix, confidence, evidence, suggested_layout]
+      properties:
+        prefix:
+          type: string
+        confidence:
+          type: number
+        evidence:
+          type: object
+          additionalProperties: true
+        suggested_layout:
+          type: object
+          additionalProperties: true

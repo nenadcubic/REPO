@@ -46,6 +46,9 @@ echo "[2/6] namespaces"
 NS="$(json_get "/api/v1/namespaces" | python3 -c 'import json,sys;p=json.load(sys.stdin);d=p.get("data",{});print(d.get("default") or "er")')"
 test -n "$NS" || NS="er"
 
+echo "[2b/6] namespaces discover"
+json_get "/api/v1/namespaces/discover?max_keys=2000&sample_per_prefix=50&scan_count=500" | assert_ok_json
+
 echo "[3/6] config"
 json_get "/api/v1/config" | assert_ok_json
 
