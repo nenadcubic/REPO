@@ -63,7 +63,7 @@ This may take a few minutes the first time (Docker image build).
 
 Once started, open a browser and go to:
 
-- http://localhost:8080
+- http://localhost:18080
 
 You should see a dark-themed web interface with a sidebar:
 
@@ -81,7 +81,7 @@ You should see a dark-themed web interface with a sidebar:
 Optional but recommended:
 
 ```bash
-curl http://localhost:8000/api/v1/health
+curl http://localhost:18000/api/v1/health
 ```
 
 Expected response (example):

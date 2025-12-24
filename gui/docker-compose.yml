@@ -31,7 +31,7 @@ services:
       - ./presets:/app/presets
       - er_gui_backend_logs:/app/logs
     ports:
-      - "${GUI_API_PORT:-8000}:8000"
+      - "${GUI_API_PORT:-18000}:8000"
     depends_on:
       redis:
         condition: service_healthy
@@ -47,7 +47,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "${GUI_HTTP_PORT:-8080}:80"
+      - "${GUI_HTTP_PORT:-18080}:80"
     depends_on:
       backend:
         condition: service_healthy

@@ -17,8 +17,8 @@ From repo root:
 - `docker compose -f gui/docker-compose.yml up -d --build`
 
 Open:
-- GUI: `http://localhost:${GUI_HTTP_PORT:-8080}`
-- API: `http://localhost:${GUI_API_PORT:-8000}/api/v1/health`
+- GUI: `http://localhost:${GUI_HTTP_PORT:-18080}`
+- API: `http://localhost:${GUI_API_PORT:-18000}/api/v1/health`
 
 ## Config: `.env` + presets
 
@@ -27,8 +27,8 @@ Open:
 
 Common variables:
 - `GUI_PRESET` (default: `default`)
-- `GUI_HTTP_PORT` (default: `8080`)
-- `GUI_API_PORT` (default: `8000`)
+- `GUI_HTTP_PORT` (default: `18080`)
+- `GUI_API_PORT` (default: `18000`)
 
 Backend/Redis variables (rarely needed; preset defaults are fine):
 - `ER_REDIS_HOST` (default preset: `redis`)
@@ -63,6 +63,6 @@ After the sandbox is up, run:
 
 ## Troubleshooting
 
-- Check health: `curl -sS http://localhost:${GUI_API_PORT:-8000}/api/v1/health` (optionally: `| jq`)
+- Check health: `curl -sS http://localhost:${GUI_API_PORT:-18000}/api/v1/health` (optionally: `| jq`)
 - View logs: `docker compose -f gui/docker-compose.yml logs -f --tail=200 backend`
 - If ports are busy, set `GUI_HTTP_PORT` / `GUI_API_PORT` in `gui/.env`.
