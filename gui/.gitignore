@@ -1,1 +1,2 @@
 .env
+presets/*/namespaces.generated.json
