@@ -1,0 +1,14 @@
+{
+  "id": "multi_namespace_demo",
+  "title": "Multi-namespace demo",
+  "type": "seed",
+  "description": "Demonstrates that the same element names can exist independently in multiple namespaces (prefix families).",
+  "default_namespace": "er",
+  "tags": ["seed", "namespaces", "isolation"],
+  "reference": { "kind": "none", "path": null },
+  "elements": [
+    { "name": "shared:one", "bits": [0, 1, 7] },
+    { "name": "shared:two", "bits": [1, 7] },
+    { "name": "shared:three", "bits": [7] }
+  ]
+}

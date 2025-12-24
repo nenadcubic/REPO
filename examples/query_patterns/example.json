@@ -1,0 +1,22 @@
+{
+  "id": "query_patterns",
+  "title": "Query patterns",
+  "type": "seed",
+  "description": "Small dataset designed to demonstrate strict AND, OR, and NOT query patterns with predictable result sets.",
+  "default_namespace": "er",
+  "tags": ["seed", "queries", "patterns"],
+  "reference": { "kind": "none", "path": null },
+  "elements": [
+    { "name": "and_exact", "bits": [10, 11] },
+    { "name": "and_superset", "bits": [10, 11, 12] },
+    { "name": "or_only_10", "bits": [10] },
+    { "name": "or_only_11", "bits": [11] },
+    { "name": "neither_10_11", "bits": [12] }
+  ],
+  "queries": [
+    { "type": "find_all", "bits": [10, 11] },
+    { "type": "find_any", "bits": [10, 11] },
+    { "type": "find_not", "bits": [10, 12] },
+    { "type": "universe_not", "bits": [12] }
+  ]
+}

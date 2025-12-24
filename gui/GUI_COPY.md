@@ -207,7 +207,7 @@ Scope: User GUI copy (labels, help text, messages)
 - `Reset namespace first (safe delete of canonical keys only)` (checkbox)
 
 ### Buttons:
-- `Load into Redis` (primary, seed examples)
+- `Run example` (primary, seed examples)
 - `Run Import` (primary, dataset compare examples)
 - `Compare` (dataset compare examples)
 - `Refresh list`

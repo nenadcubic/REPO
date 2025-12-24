@@ -1,7 +1,7 @@
 {
   "schema": "er.gui.bitmaps.v1",
   "meta": {
-    "name": "Element-Redis bit-maps (default)",
+    "name": "Element-Redis bit-maps (er2)",
     "version": 1,
     "updated_utc": "2025-12-24T00:00:00Z"
   },

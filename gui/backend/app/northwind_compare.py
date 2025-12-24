@@ -11,9 +11,6 @@ import redis
 
 from .errors import ApiError
 
-
-ALLOWED_ASSETS_DIR = Path("/app/examples/northwind_compare/assets").resolve()
-
 TABLE_TOKENS: list[str] = [
     "Customers",
     "Orders",
@@ -89,22 +86,41 @@ def resolve_or_layout(*, namespaces_doc: dict[str, Any], layout_id: str) -> OrLa
     )
 
 
-def resolve_sqlite_path(ref_path: str) -> Path:
-    p = Path(ref_path)
-    if not p.is_absolute():
-        p = (Path("/app") / p).resolve()
-    else:
-        p = p.resolve()
-    if not p.is_relative_to(ALLOWED_ASSETS_DIR):
-        raise ApiError("INVALID_INPUT", "sqlite path must be within examples/northwind_compare/assets", status_code=422)
-    if not p.exists():
+def resolve_sqlite_path(*, example_dir: Path, ref_path: str) -> Path:
+    assets_dir = (example_dir / "assets").resolve()
+    if not assets_dir.is_dir():
         raise ApiError(
             "NOT_FOUND",
-            "sqlite database not found; place northwind.sqlite under examples/northwind_compare/assets",
+            "example assets directory missing",
             status_code=404,
-            details={"path": str(p)},
+            details={"assets_dir": str(assets_dir)},
         )
-    return p
+
+    rel = (ref_path or "").strip()
+    if not rel:
+        raise ApiError("INVALID_INPUT", "sqlite path is required", status_code=422)
+
+    p = Path(rel)
+    if p.is_absolute():
+        resolved = p.resolve()
+    else:
+        resolved = (example_dir / p).resolve()
+
+    if not resolved.is_relative_to(assets_dir):
+        raise ApiError(
+            "INVALID_INPUT",
+            "sqlite path must be within this example's assets directory",
+            status_code=422,
+            details={"assets_dir": str(assets_dir)},
+        )
+    if not resolved.exists():
+        raise ApiError(
+            "NOT_FOUND",
+            "sqlite database not found; place the file under this example's assets directory",
+            status_code=404,
+            details={"path": str(resolved)},
+        )
+    return resolved
 
 
 def _find_table(conn: sqlite3.Connection, candidates: list[str]) -> str | None:

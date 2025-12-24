@@ -80,9 +80,20 @@ You should see a dark-themed web interface with a sidebar:
 
 Use the Namespace selector in the header to switch between allowed Redis prefix families (for example `er:*` vs `or:*`).
 
-Examples:
-- Use `Examples` to load predefined datasets (safe, no script execution).
-- `northwind_compare` imports from a local SQLite DB and compares SQLite vs Redis metrics.
+## Examples
+
+All examples live under `examples/<id>/` and must include:
+- `examples/<id>/example.json`
+- `examples/<id>/README.md`
+
+Examples are discovered by the backend and shown in the GUI’s `Examples` tab. No scripts from `examples/` are executed by the GUI.
+
+Example types:
+- `seed`: loads a small predefined set of elements (useful for `Elements`, `Queries`, and `Matrix`)
+- `dataset_compare`: imports a dataset (for example from SQLite) and provides comparison reports
+
+Built-in dataset compare example:
+- `northwind_compare` imports from `examples/northwind_compare/assets/northwind.sqlite` into the `or` namespace and compares SQLite vs Redis metrics.
 
 ## 5. Verifying the System (Recommended)
 

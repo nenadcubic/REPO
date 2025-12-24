@@ -1,8 +1,11 @@
 {
   "id": "math_universe",
   "title": "Math universe (mini)",
-  "namespace": "er",
   "description": "Mini version inspired by /examples/math_universe (safe seed; no scripts executed).",
+  "type": "seed",
+  "default_namespace": "er",
+  "tags": ["seed", "math", "legacy"],
+  "reference": { "kind": "none", "path": null },
   "elements": [
     { "name": "U", "bits": [0, 1, 2, 3, 4, 5] },
     { "name": "A", "bits": [0, 2, 4] },
@@ -10,4 +13,3 @@
     { "name": "C", "bits": [3, 5] }
   ]
 }
-

@@ -81,5 +81,5 @@ StoreRequest = StoreFindAll | StoreFindAny | StoreFindNot
 
 
 class ExamplesRunRequest(BaseModel):
-    ns: str = Field(min_length=1)
-    reset: bool = False
+    ns: str | None = None
+    reset: bool | None = None

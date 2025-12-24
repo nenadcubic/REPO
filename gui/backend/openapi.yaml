@@ -203,7 +203,7 @@ paths:
             type: string
         - in: query
           name: ns
-          required: true
+          required: false
           schema:
             type: string
       responses:
@@ -1028,7 +1028,7 @@ components:
                 $ref: "#/components/schemas/ExampleInfo"
     ExampleInfo:
       type: object
-      required: [id, title, description, type]
+      required: [id, title, description, type, default_namespace, tags]
       properties:
         id:
           type: string
@@ -1038,20 +1038,18 @@ components:
           type: string
         type:
           type: string
-        namespace:
+        default_namespace:
           type: string
-          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
         element_count_estimate:
           type: integer
           nullable: true
         reference:
           type: object
           additionalProperties: true
-        targets:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
         compare_reports:
           type: array
           items:
@@ -1065,20 +1063,19 @@ components:
           const: true
         data:
           type: object
-          required: [id, readme]
+          required: [markdown]
           properties:
-            id:
-              type: string
-            readme:
+            markdown:
               type: string
     ExamplesRunRequest:
       type: object
-      required: [ns]
       properties:
         ns:
           type: string
+          nullable: true
         reset:
           type: boolean
+          nullable: true
     ExamplesRunResponse:
       type: object
       required: [ok, data]

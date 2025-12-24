@@ -170,15 +170,20 @@ async def namespaces_discover(
 @app.get("/api/v1/examples")
 async def examples() -> dict[str, Any]:
     ex = []
-    for e in list_examples(logger=logger):
-        item: dict[str, Any] = {"id": e.id, "title": e.title, "description": e.description, "type": e.type}
+    for e in sorted(list_examples(logger=logger), key=lambda it: it.id):
+        item: dict[str, Any] = {
+            "id": e.id,
+            "title": e.title,
+            "type": e.type,
+            "description": e.description,
+            "default_namespace": e.default_namespace,
+            "tags": e.tags,
+        }
         if e.type == "seed":
-            item["namespace"] = e.namespace
             item["element_count_estimate"] = len(e.elements or [])
         if e.type == "dataset_compare":
-            item["targets"] = e.targets or []
-            item["compare_reports"] = e.compare_reports or []
-            item["reference"] = {"kind": (e.reference or {}).get("kind"), "path": (e.reference or {}).get("path")}
+            item["compare_reports"] = [{"id": r.id, "title": r.title} for r in (e.compare_reports or [])]
+            item["reference"] = {"kind": (e.reference.kind if e.reference else None), "path": (e.reference.path if e.reference else None)}
         ex.append(item)
     return ok({"examples": ex})
 
@@ -189,10 +194,11 @@ async def examples_readme(id: str) -> dict[str, Any]:
 
 @app.post("/api/v1/examples/{id}/run")
 async def examples_run(id: str, body: ExamplesRunRequest) -> dict[str, Any]:
-    ns_id, ent, namespaces_doc = _resolve_ns_entry(body.ns)
     ex = next((x for x in list_examples(logger=logger) if x.id == id), None)
     if not ex:
         raise ApiError("INVALID_INPUT", "unknown example id", status_code=422, details={"id": id})
+    ns_to_use = (body.ns or "").strip() or ex.default_namespace
+    ns_id, ent, namespaces_doc = _resolve_ns_entry(ns_to_use)
     if ex.type == "dataset_compare" and ent.layout != "or_layout_v2":
         raise ApiError("INVALID_INPUT", "example requires OR layout", status_code=422, details={"ns": ns_id, "layout": ent.layout})
 
@@ -203,7 +209,7 @@ async def examples_run(id: str, body: ExamplesRunRequest) -> dict[str, Any]:
         prefix=ent.prefix,
         layout_id=ent.layout,
         namespaces_doc=namespaces_doc,
-        reset=bool(body.reset),
+        reset=(bool(body.reset) if body.reset is not None else False),
         r=r,
         er_cli_path=settings.er_cli_path,
         redis_host=settings.redis_host,
@@ -217,10 +223,11 @@ async def examples_run(id: str, body: ExamplesRunRequest) -> dict[str, Any]:
 async def examples_reports(id: str, ns: str | None = None) -> dict[str, Any]:
     if not isinstance(id, str) or not id.strip():
         raise ApiError("INVALID_INPUT", "id is required", status_code=422)
-    ns_id, ent, namespaces_doc = _resolve_ns_entry(ns)
     ex = next((x for x in list_examples(logger=logger) if x.id == id), None)
     if not ex:
         raise ApiError("INVALID_INPUT", "unknown example id", status_code=422, details={"id": id})
+    ns_to_use = (ns or "").strip() or ex.default_namespace
+    ns_id, ent, namespaces_doc = _resolve_ns_entry(ns_to_use)
     if ex.type == "dataset_compare" and ent.layout != "or_layout_v2":
         raise ApiError("INVALID_INPUT", "example requires OR layout", status_code=422, details={"ns": ns_id, "layout": ent.layout})
     r = redis_client()

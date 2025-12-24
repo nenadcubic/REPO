@@ -947,11 +947,11 @@ async function fetchExampleReadme(id, { force = false } = {}) {
   const exId = String(id || "").trim();
   if (!exId) return null;
   if (examplesReadmeCache.has(exId) && !force) {
-    return { ok: true, data: { id: exId, readme: examplesReadmeCache.get(exId) } };
+    return { ok: true, data: { markdown: examplesReadmeCache.get(exId) } };
   }
   const out = await apiJson(`/api/v1/examples/${encodeURIComponent(exId)}/readme`);
   if (out.ok) {
-    const md = String(out?.data?.readme ?? "");
+    const md = String(out?.data?.markdown ?? "");
     examplesReadmeCache.set(exId, md);
   }
   return out;
@@ -1101,11 +1101,18 @@ function clearExamplesReports() {
 function setExamplesMode(selected) {
   const runBtn = $("btnExamplesRun");
   const compareBtn = $("btnExamplesCompare");
+  const resetText = $("examplesResetText");
   if (!runBtn || !compareBtn) return;
   const type = String(selected?.type || "seed");
-  runBtn.textContent = type === "dataset_compare" ? "Run Import" : "Load into Redis";
+  runBtn.textContent = type === "dataset_compare" ? "Run Import" : "Run example";
   compareBtn.classList.toggle("hidden", type !== "dataset_compare");
   compareBtn.disabled = type !== "dataset_compare";
+  if (resetText) {
+    resetText.textContent =
+      type === "dataset_compare"
+        ? "Reset imported dataset first (safe; deletes only objects from this example)"
+        : "Reset this example's created elements first (safe)";
+  }
   clearExamplesReports();
 }
 
@@ -1121,15 +1128,19 @@ async function updateExamplesMetaAndReadme({ forceReadme = false } = {}) {
   }
 
   const type = String(selected.type || "seed");
+  const tags = Array.isArray(selected.tags) ? selected.tags.map((t) => String(t || "").trim()).filter(Boolean) : [];
   const base =
     `Active example: ${selected.title} (${selected.id})\n` +
     `${selected.description}\n` +
-    `Type: ${type}`;
+    `Type: ${type}\n` +
+    `Default namespace: ${selected.default_namespace || "n/a"}\n` +
+    `Tags: ${tags.length ? tags.join(", ") : "—"}`;
   if (type === "dataset_compare") {
-    const targetNs = Array.isArray(selected.targets) && selected.targets.length ? String(selected.targets[0]?.ns || "") : "";
-    meta.textContent = `${base}\nTarget namespace: ${targetNs || "n/a"}`;
+    const reports = Array.isArray(selected.compare_reports) ? selected.compare_reports : [];
+    const reportTitles = reports.map((r) => String(r?.title || r?.id || "").trim()).filter(Boolean);
+    meta.textContent = `${base}\nCompare reports: ${reportTitles.length ? reportTitles.join(" • ") : "—"}`;
   } else {
-    meta.textContent = `${base}\nDefault namespace: ${selected.namespace || "n/a"} • Estimated elements: ${selected.element_count_estimate ?? "n/a"}`;
+    meta.textContent = `${base}\nEstimated elements: ${selected.element_count_estimate ?? "n/a"}`;
   }
 
   readmeEl.innerHTML = `<div class="muted">Loading README...</div>`;
@@ -1142,7 +1153,7 @@ async function updateExamplesMetaAndReadme({ forceReadme = false } = {}) {
     readmeEl.innerHTML = `<pre><code>${escapeHtml(envelopeToText(out))}</code></pre>`;
     return;
   }
-  readmeEl.innerHTML = renderMarkdown(out?.data?.readme || "");
+  readmeEl.innerHTML = renderMarkdown(out?.data?.markdown || "");
 }
 
 async function renderExamples({ forceReadme = false } = {}) {
@@ -1179,14 +1190,12 @@ async function renderExamples({ forceReadme = false } = {}) {
   if (String(selected?.type || "seed") === "dataset_compare") {
     outEl.textContent = "Click “Run Import”, then “Compare”.";
   } else {
-    outEl.textContent = "Click “Load into Redis”.";
+    outEl.textContent = "Click “Run example”.";
   }
   links.innerHTML = "";
   setExamplesMode(selected);
-  if (String(selected?.type || "seed") === "dataset_compare") {
-    const targetNs = Array.isArray(selected.targets) && selected.targets.length ? String(selected.targets[0]?.ns || "") : "";
-    if (targetNs && (nsState.options || []).some((o) => o.id === targetNs)) nsSel.value = targetNs;
-  }
+  const defaultNs = String(selected?.default_namespace || "").trim();
+  if (defaultNs && (nsState.options || []).some((o) => o.id === defaultNs)) nsSel.value = defaultNs;
   await updateExamplesMetaAndReadme({ forceReadme });
 }
 
@@ -1226,7 +1235,7 @@ function renderExamplesRunResult(res) {
     `Created: ${d.counts?.created ?? 0}\n` +
     `Updated: ${d.counts?.updated ?? 0}\n` +
     `Skipped: ${d.counts?.skipped ?? 0}\n` +
-    (d.reset ? `\nReset:\n- scanned: ${d.reset.scanned}\n- deleted: ${d.reset.deleted}\n- skipped: ${d.reset.skipped}\n` : "") +
+    (d.reset ? `\nReset:\n- scanned: ${d.reset.scanned}\n- deleted_elements: ${d.reset.deleted_elements}\n` : "") +
     truncNote;
 
   const names = [...(d.created || []), ...(d.updated || [])].slice(0, 20);
@@ -1781,7 +1790,11 @@ function setupActions() {
 
 	  $("examplesSelect").addEventListener("change", async () => {
 	    if (state.locked) return;
-	    setExamplesMode(getSelectedExample());
+	    const selected = getSelectedExample();
+	    setExamplesMode(selected);
+	    const nsSel = $("examplesNs");
+	    const defaultNs = String(selected?.default_namespace || "").trim();
+	    if (nsSel && defaultNs && (nsState.options || []).some((o) => o.id === defaultNs)) nsSel.value = defaultNs;
 	    clearExamplesReports();
 	    await updateExamplesMetaAndReadme({ forceReadme: false });
 	  });

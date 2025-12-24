@@ -5,13 +5,20 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import redis
 
 from .cli_adapter import er_cli_put
 from .errors import ApiError
-from .northwind_compare import import_northwind, report_order_totals_sample, report_row_counts, resolve_or_layout, resolve_sqlite_path
+from .northwind_compare import (
+    import_northwind,
+    report_order_totals_sample,
+    report_row_counts,
+    resolve_or_layout,
+    resolve_sqlite_path,
+)
+from .redis_bits import decode_flags_bin, element_key_with_prefix
 
 
 _EXAMPLE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -26,66 +33,30 @@ class ExampleElement:
 
 
 @dataclass(frozen=True)
+class ExampleReference:
+    kind: Literal["none", "sqlite", "external"]
+    path: str | None
+
+
+@dataclass(frozen=True)
+class ExampleCompareReport:
+    id: str
+    title: str
+
+
+@dataclass(frozen=True)
 class ExampleDef:
     id: str
     title: str
+    type: Literal["seed", "dataset_compare"]
     description: str
-    type: str  # "seed" | "dataset_compare"
-    namespace: str | None = None
+    default_namespace: str
+    tags: list[str]
     elements: list[ExampleElement] | None = None
     queries: list[dict[str, Any]] | None = None
-    reference: dict[str, Any] | None = None
-    targets: list[dict[str, Any]] | None = None
-    compare_reports: list[dict[str, Any]] | None = None
-
-
-def _builtin_examples() -> list[ExampleDef]:
-    return [
-        ExampleDef(
-            id="basic_seed",
-            title="Basic seed",
-            description="Small deterministic dataset for quick manual testing of Elements, Queries, Store+TTL, and Matrix.",
-            type="seed",
-            namespace="er",
-            elements=[
-                ExampleElement("alice", [1, 7, 42]),
-                ExampleElement("bob", [7, 9, 1024]),
-                ExampleElement("carol", [1, 9, 13, 2048]),
-                ExampleElement("dave", [0, 1, 2, 3, 4]),
-                ExampleElement("eve", [4095]),
-            ],
-            queries=[
-                {"type": "find", "bit": 7, "note": "Elements containing bit 7"},
-                {"type": "find_all", "bits": [1, 9], "note": "Elements containing both 1 and 9"},
-            ],
-        ),
-        ExampleDef(
-            id="math_universe",
-            title="Math universe (mini)",
-            description="Mini version inspired by /examples/math_universe (no scripts executed).",
-            type="seed",
-            namespace="er",
-            elements=[
-                ExampleElement("U", [0, 1, 2, 3, 4, 5]),
-                ExampleElement("A", [0, 2, 4]),
-                ExampleElement("B", [1, 2, 3]),
-                ExampleElement("C", [3, 5]),
-            ],
-        ),
-        ExampleDef(
-            id="northwind",
-            title="Northwind (mini)",
-            description="Mini dataset inspired by /examples/northwind (no DB/scripts; names are illustrative).",
-            type="seed",
-            namespace="er",
-            elements=[
-                ExampleElement("cust:ALFKI", [0, 10, 20]),
-                ExampleElement("cust:ANATR", [0, 11, 21]),
-                ExampleElement("order:10248", [1, 10, 30]),
-                ExampleElement("order:10249", [1, 11, 31]),
-            ],
-        ),
-    ]
+    reference: ExampleReference | None = None
+    compare_reports: list[ExampleCompareReport] | None = None
+    dir: Path | None = None
 
 
 def _discover_examples_dir() -> Path | None:
@@ -131,8 +102,77 @@ def _read_small_text(path: Path, *, max_bytes: int) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _require_str_field(doc: dict[str, Any], key: str) -> str:
+    v = doc.get(key)
+    if not isinstance(v, str) or not v.strip():
+        raise ApiError("INVALID_INPUT", f"missing required field: {key}", status_code=422)
+    return v.strip()
+
+
+def _parse_tags(doc: dict[str, Any]) -> list[str]:
+    raw = doc.get("tags")
+    if not isinstance(raw, list):
+        raise ApiError("INVALID_INPUT", "tags must be a list", status_code=422)
+    out: list[str] = []
+    seen: set[str] = set()
+    for it in raw:
+        if not isinstance(it, str):
+            continue
+        s = it.strip()
+        if not s:
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _parse_reference(doc: dict[str, Any]) -> ExampleReference:
+    raw = doc.get("reference")
+    if not isinstance(raw, dict):
+        raise ApiError("INVALID_INPUT", "reference must be an object", status_code=422)
+    kind = str(raw.get("kind") or "").strip()
+    if kind not in ("none", "sqlite", "external"):
+        raise ApiError("INVALID_INPUT", "invalid reference.kind", status_code=422, details={"kind": kind})
+    path = raw.get("path")
+    if path is None:
+        return ExampleReference(kind=kind, path=None)
+    if not isinstance(path, str):
+        raise ApiError("INVALID_INPUT", "invalid reference.path", status_code=422)
+    p = path.strip()
+    return ExampleReference(kind=kind, path=(p if p else None))
+
+
+def _parse_compare_reports(doc: dict[str, Any]) -> list[ExampleCompareReport]:
+    raw = doc.get("compare_reports")
+    if not isinstance(raw, list):
+        raise ApiError("INVALID_INPUT", "compare_reports must be a list", status_code=422)
+    out: list[ExampleCompareReport] = []
+    seen: set[str] = set()
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        rid = str(it.get("id") or "").strip()
+        title = str(it.get("title") or "").strip()
+        if not rid or not title:
+            continue
+        if not _EXAMPLE_ID_RE.fullmatch(rid):
+            continue
+        if rid in seen:
+            continue
+        seen.add(rid)
+        out.append(ExampleCompareReport(id=rid, title=title))
+    if not out:
+        raise ApiError("INVALID_INPUT", "example has no valid compare_reports", status_code=422)
+    return out
+
+
 def _load_example_from_dir(*, base: Path, example_id: str) -> ExampleDef:
     p = _example_dir_for(base=base, example_id=example_id)
+    if not (p / "README.md").is_file():
+        raise ApiError("INVALID_INPUT", "missing README.md", status_code=422, details={"id": example_id})
+
     raw = _read_small_text(p / "example.json", max_bytes=_MAX_EXAMPLE_JSON_BYTES)
     try:
         doc = json.loads(raw)
@@ -149,41 +189,45 @@ def _load_example_from_dir(*, base: Path, example_id: str) -> ExampleDef:
             status_code=422,
             details={"dir": example_id, "id": ex_id},
         )
-    title = str(doc.get("title") or "").strip()
-    desc = str(doc.get("description") or "").strip()
-    ex_type = str(doc.get("type") or "seed").strip() or "seed"
-    if not title or not desc:
-        raise ApiError("INVALID_INPUT", "missing required fields in example.json", status_code=422, details={"id": ex_id})
+    title = _require_str_field(doc, "title")
+    desc = _require_str_field(doc, "description")
+    ex_type = str(doc.get("type") or "").strip() or "seed"
+    if ex_type not in ("seed", "dataset_compare"):
+        raise ApiError("INVALID_INPUT", "invalid type", status_code=422, details={"type": ex_type})
+
+    default_ns = _require_str_field(doc, "default_namespace")
+    tags = _parse_tags(doc)
+    ref = _parse_reference(doc)
 
     if ex_type == "dataset_compare":
-        ref = doc.get("reference") if isinstance(doc.get("reference"), dict) else None
-        targets = doc.get("targets") if isinstance(doc.get("targets"), list) else None
-        reports = doc.get("compare_reports") if isinstance(doc.get("compare_reports"), list) else None
-        if not ref or not targets or not reports:
+        if ref.kind != "sqlite" or not ref.path:
             raise ApiError(
                 "INVALID_INPUT",
-                "missing required fields in example.json",
+                "dataset_compare examples require reference.kind=sqlite and a non-empty reference.path",
                 status_code=422,
-                details={"id": ex_id, "required": ["id", "title", "type", "description", "reference", "targets", "compare_reports"]},
+                details={"id": ex_id, "reference": {"kind": ref.kind, "path": ref.path}},
             )
+        reports = _parse_compare_reports(doc)
         return ExampleDef(
             id=ex_id,
             title=title,
-            description=desc,
             type="dataset_compare",
+            description=desc,
+            default_namespace=default_ns,
+            tags=tags,
             reference=ref,
-            targets=targets,
             compare_reports=reports,
+            dir=p,
         )
 
-    ns = str(doc.get("namespace") or "").strip()
-    if not ns:
+    if ref.kind != "none" or ref.path is not None:
         raise ApiError(
             "INVALID_INPUT",
-            "missing required fields in example.json",
+            'seed examples require reference.kind="none" and reference.path=null',
             status_code=422,
-            details={"id": ex_id, "required": ["id", "title", "namespace", "description", "elements"]},
+            details={"id": ex_id, "reference": {"kind": ref.kind, "path": ref.path}},
         )
+
     if not isinstance(doc.get("elements"), list):
         raise ApiError("INVALID_INPUT", "elements must be a list", status_code=422, details={"id": ex_id})
 
@@ -221,16 +265,37 @@ def _load_example_from_dir(*, base: Path, example_id: str) -> ExampleDef:
     if queries is not None and not isinstance(queries, list):
         queries = None
 
-    return ExampleDef(id=ex_id, title=title, description=desc, type="seed", namespace=ns, elements=elements, queries=queries)
+    return ExampleDef(
+        id=ex_id,
+        title=title,
+        type="seed",
+        description=desc,
+        default_namespace=default_ns,
+        tags=tags,
+        elements=elements,
+        queries=queries,
+        reference=ref,
+        dir=p,
+    )
+
+
+_REGISTRY: dict[str, ExampleDef] | None = None
+_REGISTRY_BASE: Path | None = None
 
 
 def list_examples(*, logger: Any | None = None) -> list[ExampleDef]:
+    global _REGISTRY, _REGISTRY_BASE
+    if _REGISTRY is not None:
+        return list(_REGISTRY.values())
+
     base = _discover_examples_dir()
     if not base:
-        return _builtin_examples()
+        _REGISTRY = {}
+        _REGISTRY_BASE = None
+        return []
 
-    out: list[ExampleDef] = []
-    seen: set[str] = set()
+    registry: dict[str, ExampleDef] = {}
+    _REGISTRY_BASE = base
     for child in sorted(base.iterdir(), key=lambda p: p.name):
         if not child.is_dir():
             continue
@@ -245,81 +310,69 @@ def list_examples(*, logger: Any | None = None) -> list[ExampleDef]:
             if logger:
                 logger.warning("Skipping example id=%s: %s", ex_id, e.message)
             continue
-        if ex.id in seen:
+        if ex.id in registry:
+            if logger:
+                logger.warning("Skipping duplicate example id=%s", ex.id)
             continue
-        seen.add(ex.id)
-        out.append(ex)
+        registry[ex.id] = ex
 
-    return out if out else _builtin_examples()
+    _REGISTRY = registry
+    return list(registry.values())
 
 
 def get_example_readme(*, example_id: str) -> dict[str, Any]:
-    base = _discover_examples_dir()
-    if not base:
+    ex = _get_example_def(example_id=example_id, logger=None)
+    if not ex.dir:
         raise ApiError("NOT_FOUND", "examples directory not available", status_code=404)
-    ex_id = _validate_example_id(example_id)
-    p = _example_dir_for(base=base, example_id=ex_id)
-    readme_path = p / "README.md"
-    md = _read_small_text(readme_path, max_bytes=_MAX_README_BYTES)
-    return {"id": ex_id, "readme": md}
+    md = _read_small_text(ex.dir / "README.md", max_bytes=_MAX_README_BYTES)
+    return {"markdown": md}
 
 
 def _get_example_def(*, example_id: str, logger: Any | None) -> ExampleDef:
     ex_id = _validate_example_id(example_id)
-    base = _discover_examples_dir()
-    if base:
-        return _load_example_from_dir(base=base, example_id=ex_id)
-    ex = next((e for e in _builtin_examples() if e.id == ex_id), None)
+    ex = next((x for x in list_examples(logger=logger) if x.id == ex_id), None)
     if not ex:
         raise ApiError("INVALID_INPUT", "unknown example id", status_code=422, details={"id": ex_id})
-    if logger:
-        logger.warning("examples dir not found; using builtin example id=%s", ex_id)
     return ex
 
 
-def _canonical_key_allowed(prefix: str, key: str) -> bool:
+def _seed_registry_key(*, prefix: str, example_id: str) -> str:
     pfx = (prefix or "").strip(":")
-    if not pfx:
-        return False
-    return (
-        key == f"{pfx}:all"
-        or key.startswith(f"{pfx}:element:")
-        or key.startswith(f"{pfx}:idx:bit:")
-        or key.startswith(f"{pfx}:tmp:")
-    )
+    return f"{pfx}:example:{example_id}:created"
 
 
-def reset_namespace(*, r: redis.Redis, prefix: str, max_scan: int = 50000) -> dict[str, Any]:
+def reset_seed_example(*, r: redis.Redis, prefix: str, example_id: str) -> dict[str, Any]:
     pfx = (prefix or "").strip(":")
     if not pfx:
         raise ApiError("INVALID_INPUT", "invalid namespace prefix", status_code=422)
 
-    scanned = 0
-    deleted = 0
-    skipped = 0
-    unknown = 0
+    reg = _seed_registry_key(prefix=pfx, example_id=example_id)
+    universe_key = f"{pfx}:all"
 
-    cursor = 0
-    while True:
-        cursor, batch = r.scan(cursor=cursor, match=f"{pfx}:*", count=1000)
-        keys = []
-        for raw in batch:
-            k = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
-            scanned += 1
-            if _canonical_key_allowed(pfx, k):
-                keys.append(k)
-            else:
-                unknown += 1
-            if scanned >= max_scan:
-                break
-        if keys:
-            deleted += int(r.delete(*keys))
-        if cursor == 0 or scanned >= max_scan:
-            break
+    members = r.smembers(reg)
+    names = [m.decode("utf-8", errors="replace") if isinstance(m, bytes) else str(m) for m in members]
+    names = [n for n in names if n]
 
-    # "skipped" are keys we saw but refused to delete due to unknown pattern
-    skipped = unknown
-    return {"scanned": scanned, "deleted": deleted, "skipped": skipped}
+    pipe = r.pipeline(transaction=False)
+    deleted_elements = 0
+    for name in names:
+        el_key = element_key_with_prefix(pfx, name)
+        flags = r.get(el_key)
+        bits: list[int] = []
+        if isinstance(flags, (bytes, bytearray)) and len(flags) == 512:
+            try:
+                bits = decode_flags_bin(bytes(flags))
+            except Exception:
+                bits = []
+        pipe.delete(el_key)
+        pipe.srem(universe_key, name)
+        for b in bits:
+            pipe.srem(f"{pfx}:idx:bit:{b}", name)
+        deleted_elements += 1
+
+    pipe.delete(reg)
+    pipe.execute()
+    return {"mode": "example_registry", "scanned": len(names), "deleted_elements": deleted_elements}
 
 
 def run_example(
@@ -339,20 +392,20 @@ def run_example(
     ex = _get_example_def(example_id=example_id, logger=logger)
 
     if ex.type == "dataset_compare":
-        ref = ex.reference or {}
-        if str(ref.get("kind") or "").strip() != "sqlite":
-            raise ApiError("INVALID_INPUT", "unsupported reference kind", status_code=422, details={"kind": ref.get("kind")})
-        sqlite_path = resolve_sqlite_path(str(ref.get("path") or ""))
+        if ex.id != "northwind_compare":
+            raise ApiError("INVALID_INPUT", "unknown dataset_compare example", status_code=422, details={"id": ex.id})
+        if not ex.reference or ex.reference.kind != "sqlite" or not ex.reference.path:
+            raise ApiError("INVALID_INPUT", "invalid reference", status_code=422, details={"id": ex.id})
+        if not ex.dir:
+            raise ApiError("NOT_FOUND", "example directory not available", status_code=404, details={"id": ex.id})
+        sqlite_path = resolve_sqlite_path(example_dir=ex.dir, ref_path=ex.reference.path)
         tpl = resolve_or_layout(namespaces_doc=namespaces_doc, layout_id=layout_id)
         data = import_northwind(r=r, prefix=prefix, tpl=tpl, sqlite_path=sqlite_path, reset=reset, logger=logger)
         return {"id": example_id, "type": "dataset_compare", "ns": ns, **data}
 
-    if ex.type != "seed":
-        raise ApiError("INVALID_INPUT", "unknown example type", status_code=422, details={"type": ex.type})
-
     reset_info = None
     if reset:
-        reset_info = reset_namespace(r=r, prefix=prefix)
+        reset_info = reset_seed_example(r=r, prefix=prefix, example_id=example_id)
 
     created_total = 0
     updated_total = 0
@@ -395,6 +448,7 @@ def run_example(
             created_total += 1
             if len(created) < sample_cap:
                 created.append(name)
+            r.sadd(_seed_registry_key(prefix=prefix, example_id=example_id), name)
 
     logger.info(
         "examples run id=%s ns=%s created=%d updated=%d skipped=%d",
@@ -437,11 +491,13 @@ def run_reports(
     ex = _get_example_def(example_id=example_id, logger=logger)
     if ex.type != "dataset_compare":
         raise ApiError("INVALID_INPUT", "reports supported only for dataset_compare examples", status_code=422)
-    ref = ex.reference or {}
-    if str(ref.get("kind") or "").strip() != "sqlite":
-        raise ApiError("INVALID_INPUT", "unsupported reference kind", status_code=422, details={"kind": ref.get("kind")})
-
-    sqlite_path = resolve_sqlite_path(str(ref.get("path") or ""))
+    if ex.id != "northwind_compare":
+        raise ApiError("INVALID_INPUT", "unknown dataset_compare example", status_code=422, details={"id": ex.id})
+    if not ex.reference or ex.reference.kind != "sqlite" or not ex.reference.path:
+        raise ApiError("INVALID_INPUT", "invalid reference", status_code=422, details={"id": ex.id})
+    if not ex.dir:
+        raise ApiError("NOT_FOUND", "example directory not available", status_code=404, details={"id": ex.id})
+    sqlite_path = resolve_sqlite_path(example_dir=ex.dir, ref_path=ex.reference.path)
     tpl = resolve_or_layout(namespaces_doc=namespaces_doc, layout_id=layout_id)
 
     row_counts = report_row_counts(r=r, prefix=prefix, tpl=tpl, sqlite_path=sqlite_path)

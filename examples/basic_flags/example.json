@@ -1,0 +1,20 @@
+{
+  "id": "basic_flags",
+  "title": "Basic flags",
+  "type": "seed",
+  "description": "Three small elements to demonstrate basic flag seeding, AND/OR queries, and the Matrix view.",
+  "default_namespace": "er",
+  "tags": ["seed", "intro", "flags"],
+  "reference": { "kind": "none", "path": null },
+  "elements": [
+    { "name": "alpha", "bits": [1, 2, 3] },
+    { "name": "beta", "bits": [2, 4] },
+    { "name": "gamma", "bits": [3, 5] }
+  ],
+  "queries": [
+    { "type": "find_all", "bits": [2] },
+    { "type": "find_all", "bits": [1, 2] },
+    { "type": "find_any", "bits": [4, 5] },
+    { "type": "universe_not", "bits": [2] }
+  ]
+}

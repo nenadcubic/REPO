@@ -1,0 +1,15 @@
+{
+  "id": "bitmap_groups",
+  "title": "Bit-map groups",
+  "type": "seed",
+  "description": "Elements that use bits from multiple named groups (Risk, Region, Feature) to make Bit-maps and Matrix hover more informative.",
+  "default_namespace": "er",
+  "tags": ["seed", "bitmaps", "groups"],
+  "reference": { "kind": "none", "path": null },
+  "elements": [
+    { "name": "acct:low_us_core", "bits": [100, 200, 300] },
+    { "name": "acct:med_apac_beta", "bits": [101, 202, 302] },
+    { "name": "acct:high_eu_plus", "bits": [102, 201, 301] },
+    { "name": "acct:low_eu_beta", "bits": [100, 201, 302] }
+  ]
+}

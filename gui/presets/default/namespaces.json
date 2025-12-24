@@ -22,6 +22,7 @@
   },
   "namespaces": [
     { "id": "er", "label": "Element-Redis", "prefix": "er", "layout": "er_layout_v1" },
+    { "id": "er2", "label": "Element-Redis (er2)", "prefix": "er2", "layout": "er_layout_v1" },
     { "id": "or", "label": "Oracle-Redis", "prefix": "or", "layout": "or_layout_v2" }
   ]
 }

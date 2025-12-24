@@ -1,8 +1,11 @@
 {
   "id": "basic_seed",
   "title": "Basic seed",
-  "namespace": "er",
+  "type": "seed",
   "description": "Small deterministic dataset for quick manual testing of Elements, Queries, Store+TTL, and Matrix.",
+  "default_namespace": "er",
+  "tags": ["seed", "smoke", "legacy"],
+  "reference": { "kind": "none", "path": null },
   "elements": [
     { "name": "alice", "bits": [1, 7, 42] },
     { "name": "bob", "bits": [7, 9, 1024] },
@@ -11,8 +14,7 @@
     { "name": "eve", "bits": [4095] }
   ],
   "queries": [
-    { "type": "find", "bit": 7, "note": "Elements containing bit 7" },
-    { "type": "find_all", "bits": [1, 9], "note": "Elements containing both 1 and 9" }
+    { "type": "find_all", "bits": [7] },
+    { "type": "find_all", "bits": [1, 9] }
   ]
 }
-
