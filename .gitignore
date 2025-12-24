@@ -7,3 +7,7 @@ examples/northwind/*.sqlite
 examples/northwind_compare/assets/*.sqlite
 __pycache__/
 *.pyc
+
+# React/Vite explorer app
+gui/frontend/explorer/node_modules/
+gui/frontend/explorer/dist/

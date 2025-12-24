@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 import redis
 from fastapi import FastAPI, Request
@@ -78,6 +80,29 @@ def _resolve_ns_entry(ns: str | None) -> tuple[str, NamespaceEntry, dict[str, An
 def _resolve_ns(ns: str | None) -> tuple[str, str]:
     ns_id, ent, _ = _resolve_ns_entry(ns)
     return ns_id, ent.prefix
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _count_set_bits(flags_bin: bytes) -> int:
+    if len(flags_bin) != 512:
+        raise ApiError("INVALID_FLAGS", "flags_bin must be 512 bytes", status_code=502, details={"len": len(flags_bin)})
+    return int(int.from_bytes(flags_bin, byteorder="big", signed=False).bit_count())
+
+
+def _decode_element_key(*, key: str, prefix: str) -> str:
+    pfx = (prefix or "").strip(":")
+    if not pfx:
+        raise ApiError("INVALID_INPUT", "invalid namespace prefix", status_code=422)
+    want = f"{pfx}:element:"
+    if not key.startswith(want):
+        raise ApiError("INVALID_INPUT", "not an element key", status_code=422, details={"key": key, "prefix": pfx})
+    name = key[len(want) :]
+    if not name or len(name) > 100:
+        raise ApiError("INVALID_NAME", "name must be 1..100 chars", status_code=422, details={"name": name})
+    return name
 
 
 app = FastAPI(title="element-redis GUI API", version=BACKEND_VERSION)
@@ -233,6 +258,235 @@ async def examples_reports(id: str, ns: str | None = None) -> dict[str, Any]:
     r = redis_client()
     data = run_reports(example_id=id, ns=ns_id, prefix=ent.prefix, layout_id=ent.layout, namespaces_doc=namespaces_doc, r=r, logger=logger)
     return ok(data)
+
+
+@app.get("/api/v1/explorer/namespaces")
+async def explorer_namespaces() -> list[dict[str, Any]]:
+    doc = load_namespaces_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
+    ns_list = doc.get("namespaces") if isinstance(doc.get("namespaces"), list) else []
+    r = redis_client()
+
+    out: list[dict[str, Any]] = []
+    now = _utc_now_iso()
+    for raw in ns_list:
+        if not isinstance(raw, dict):
+            continue
+        ns_id = str(raw.get("id") or "").strip()
+        prefix = str(raw.get("prefix") or "").strip().strip(":")
+        layout_id = str(raw.get("layout") or "").strip()
+        if not ns_id or not prefix:
+            continue
+        if layout_id != "er_layout_v1":
+            continue
+        try:
+            element_count = int(r.scard(f"{prefix}:all"))
+        except Exception:
+            element_count = 0
+        out.append({"name": ns_id, "key_count": element_count, "updated_at": now})
+    return out
+
+
+@app.get("/api/v1/explorer/namespaces/{namespace}/elements")
+async def explorer_namespace_elements(
+    namespace: str,
+    search: str = "",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, Any]:
+    q = (search or "").strip().lower()
+    if page <= 0:
+        raise ApiError("INVALID_INPUT", "page must be >= 1", status_code=422)
+    if page_size <= 0 or page_size > 200:
+        raise ApiError("INVALID_INPUT", "page_size must be 1..200", status_code=422)
+
+    _, ent, _ = _resolve_ns_entry(namespace)
+    if ent.layout != "er_layout_v1":
+        return {"items": [], "page": page, "page_size": page_size, "total": 0}
+    prefix = ent.prefix.strip(":")
+
+    r = redis_client()
+    universe_key = f"{prefix}:all"
+
+    total: int
+    if not q:
+        try:
+            total = int(r.scard(universe_key))
+        except Exception:
+            total = 0
+    else:
+        total = 0
+
+    start = (page - 1) * page_size
+    end = start + page_size
+
+    cursor = 0
+    matched: list[str] = []
+    scanned = 0
+    max_scan = 200_000
+    while True:
+        cursor, batch = r.sscan(universe_key, cursor=cursor, count=1000)
+        for raw_name in batch:
+            scanned += 1
+            if scanned > max_scan:
+                cursor = 0
+                break
+            name = raw_name.decode("utf-8", errors="replace") if isinstance(raw_name, (bytes, bytearray)) else str(raw_name)
+            if not name:
+                continue
+            if q and q not in name.lower():
+                continue
+            if q:
+                total += 1
+            matched.append(name)
+        if cursor == 0:
+            break
+
+    if not q and total == 0 and matched:
+        total = len(matched)
+
+    page_names = matched[start:end]
+    keys = [element_key_with_prefix(prefix, n) for n in page_names]
+
+    pipe = r.pipeline(transaction=False)
+    for k in keys:
+        pipe.hget(k, "flags_bin")
+        pipe.ttl(k)
+    raw = pipe.execute() if keys else []
+
+    items: list[dict[str, Any]] = []
+    for i, name in enumerate(page_names):
+        flags_bin = raw[i * 2] if i * 2 < len(raw) else None
+        ttl = raw[i * 2 + 1] if i * 2 + 1 < len(raw) else None
+        if isinstance(flags_bin, str):
+            flags_bin = flags_bin.encode("utf-8")
+        if not isinstance(flags_bin, (bytes, bytearray)) or len(flags_bin) != 512:
+            set_bits_count = 0
+        else:
+            try:
+                set_bits_count = _count_set_bits(bytes(flags_bin))
+            except Exception:
+                set_bits_count = 0
+        ttl_out = None
+        if isinstance(ttl, (int, float)) and int(ttl) >= 0:
+            ttl_out = int(ttl)
+        items.append(
+            {
+                "key": element_key_with_prefix(prefix, name),
+                "short_name": name,
+                "set_bits_count": set_bits_count,
+                "ttl": ttl_out,
+            }
+        )
+
+    return {"items": items, "page": page, "page_size": page_size, "total": int(total)}
+
+
+@app.get("/api/v1/explorer/elements/{encodedKey}")
+async def explorer_element(encodedKey: str) -> dict[str, Any]:
+    raw_key = unquote(encodedKey or "").strip()
+    if not raw_key:
+        raise ApiError("INVALID_INPUT", "encodedKey is required", status_code=422)
+
+    ns_doc = load_namespaces_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
+    _, mp = namespaces_to_map(ns_doc)
+    ns_id = None
+    prefix = None
+    for k, ent in mp.items():
+        pfx = str(ent.prefix or "").strip(":")
+        if pfx and raw_key.startswith(f"{pfx}:"):
+            ns_id = k
+            prefix = pfx
+            break
+    if not ns_id or not prefix:
+        raise ApiError("INVALID_INPUT", "unknown namespace for key", status_code=422, details={"key": raw_key})
+
+    name = _decode_element_key(key=raw_key, prefix=prefix)
+
+    r = redis_client()
+    flags_bin = r.hget(raw_key, "flags_bin")
+    if flags_bin is None:
+        raise ApiError("NOT_FOUND", "element not found", status_code=404, details={"key": raw_key})
+    if isinstance(flags_bin, str):
+        flags_bin = flags_bin.encode("utf-8")
+    if not isinstance(flags_bin, (bytes, bytearray)):
+        raise ApiError("INVALID_FLAGS", "flags_bin must be bytes", status_code=502)
+    bits = decode_flags_bin(bytes(flags_bin))
+    ttl = r.ttl(raw_key)
+    ttl_out = None
+    if isinstance(ttl, (int, float)) and int(ttl) >= 0:
+        ttl_out = int(ttl)
+
+    return {
+        "key": raw_key,
+        "short_name": name,
+        "namespace": ns_id,
+        "bits": 4096,
+        "set_bits": bits,
+        "ttl": ttl_out,
+    }
+
+
+@app.get("/api/v1/explorer/namespaces/{namespace}/bitmap")
+async def explorer_namespace_bitmap(namespace: str, limit: int = 75, offset: int = 0) -> dict[str, Any]:
+    if limit <= 0 or limit > 200:
+        raise ApiError("INVALID_INPUT", "limit must be 1..200", status_code=422)
+    if offset < 0:
+        raise ApiError("INVALID_INPUT", "offset must be >= 0", status_code=422)
+
+    ns_id, ent, _ = _resolve_ns_entry(namespace)
+    if ent.layout != "er_layout_v1":
+        return {"namespace": ns_id, "bits": 4096, "elements": []}
+    prefix = ent.prefix.strip(":")
+    r = redis_client()
+    universe_key = f"{prefix}:all"
+
+    cursor = 0
+    scanned = 0
+    max_scan = 300_000
+    wanted_end = offset + limit
+    names: list[str] = []
+    while True:
+        cursor, batch = r.sscan(universe_key, cursor=cursor, count=1000)
+        for raw_name in batch:
+            scanned += 1
+            if scanned > max_scan:
+                cursor = 0
+                break
+            if scanned <= offset:
+                continue
+            name = raw_name.decode("utf-8", errors="replace") if isinstance(raw_name, (bytes, bytearray)) else str(raw_name)
+            if not name:
+                continue
+            names.append(name)
+            if len(names) >= limit:
+                cursor = 0
+                break
+        if cursor == 0 or scanned >= wanted_end:
+            if len(names) >= limit:
+                break
+            if cursor == 0:
+                break
+
+    keys = [element_key_with_prefix(prefix, n) for n in names]
+    pipe = r.pipeline(transaction=False)
+    for k in keys:
+        pipe.hget(k, "flags_bin")
+    raw = pipe.execute() if keys else []
+
+    elements: list[dict[str, Any]] = []
+    for i, name in enumerate(names):
+        flags_bin = raw[i] if i < len(raw) else None
+        if isinstance(flags_bin, str):
+            flags_bin = flags_bin.encode("utf-8")
+        bits: list[int] = []
+        if isinstance(flags_bin, (bytes, bytearray)) and len(flags_bin) == 512:
+            try:
+                bits = decode_flags_bin(bytes(flags_bin))
+            except Exception:
+                bits = []
+        elements.append({"key": element_key_with_prefix(prefix, name), "short_name": name, "set_bits": bits})
+
+    return {"namespace": ns_id, "bits": 4096, "elements": elements}
 
 
 @app.get("/api/v1/bitmaps")

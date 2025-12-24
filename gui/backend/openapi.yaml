@@ -225,6 +225,126 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/explorer/namespaces:
+    get:
+      operationId: explorerNamespaces
+      responses:
+        "200":
+          description: Namespaces available for Explorer (preset-backed, element layout only)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExplorerNamespace"
+  /api/v1/explorer/namespaces/{namespace}/elements:
+    get:
+      operationId: explorerNamespaceElements
+      parameters:
+        - in: path
+          name: namespace
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: search
+          required: false
+          schema:
+            type: string
+            default: ""
+        - in: query
+          name: page
+          required: false
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - in: query
+          name: page_size
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: Paginated element list for a namespace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExplorerElementsListResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/explorer/elements/{encodedKey}:
+    get:
+      operationId: explorerElement
+      parameters:
+        - in: path
+          name: encodedKey
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Element details including set bits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExplorerElement"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/explorer/namespaces/{namespace}/bitmap:
+    get:
+      operationId: explorerNamespaceBitmap
+      parameters:
+        - in: path
+          name: namespace
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            default: 75
+            minimum: 1
+            maximum: 200
+        - in: query
+          name: offset
+          required: false
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        "200":
+          description: Namespace bitmap overview (sparse set_bits per element)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExplorerNamespaceBitmapResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/elements/put:
     post:
       operationId: elementsPut
@@ -1162,6 +1282,86 @@ components:
                   type: array
                   items:
                     $ref: "#/components/schemas/OrderTotalReportItem"
+    ExplorerNamespace:
+      type: object
+      required: [name, key_count, updated_at]
+      properties:
+        name:
+          type: string
+        key_count:
+          type: integer
+        updated_at:
+          type: string
+    ExplorerElementsListResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExplorerElementsListItem"
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+    ExplorerElementsListItem:
+      type: object
+      required: [key, short_name, set_bits_count, ttl]
+      properties:
+        key:
+          type: string
+        short_name:
+          type: string
+        set_bits_count:
+          type: integer
+        ttl:
+          type: integer
+          nullable: true
+    ExplorerElement:
+      type: object
+      required: [key, short_name, namespace, bits, set_bits, ttl]
+      properties:
+        key:
+          type: string
+        short_name:
+          type: string
+        namespace:
+          type: string
+        bits:
+          type: integer
+        set_bits:
+          type: array
+          items:
+            type: integer
+        ttl:
+          type: integer
+          nullable: true
+    ExplorerNamespaceBitmapResponse:
+      type: object
+      required: [namespace, bits, elements]
+      properties:
+        namespace:
+          type: string
+        bits:
+          type: integer
+        elements:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExplorerNamespaceBitmapRow"
+    ExplorerNamespaceBitmapRow:
+      type: object
+      required: [key, short_name, set_bits]
+      properties:
+        key:
+          type: string
+        short_name:
+          type: string
+        set_bits:
+          type: array
+          items:
+            type: integer
     RowCountReportItem:
       type: object
       required: [table, sqlite_count, redis_count, match]

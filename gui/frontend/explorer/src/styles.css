@@ -1,0 +1,52 @@
+@import "./theme.css";
+
+.grid3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 1100px) {
+  .grid3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.explorer-small {
+  font-size: 12px;
+}
+
+.explorer-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.explorer-list {
+  margin-top: var(--s16);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: auto;
+  max-height: 560px;
+}
+
+.explorer-list-item {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.explorer-list-item button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.explorer-list-item:hover {
+  background: rgba(109, 167, 255, 0.06);
+}
+
+.explorer-list-item.selected {
+  background: rgba(109, 167, 255, 0.1);
+}
