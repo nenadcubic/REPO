@@ -341,10 +341,18 @@ def _seed_registry_key(*, prefix: str, example_id: str) -> str:
     return f"{pfx}:example:{example_id}:created"
 
 
-def reset_seed_example(*, r: redis.Redis, prefix: str, example_id: str) -> dict[str, Any]:
+def reset_seed_example(*, r: redis.Redis, prefix: str, example_id: str, ex: ExampleDef | None) -> dict[str, Any]:
     pfx = (prefix or "").strip(":")
     if not pfx:
         raise ApiError("INVALID_INPUT", "invalid namespace prefix", status_code=422)
+
+    fallback_bits_by_name: dict[str, list[int]] = {}
+    for el in (ex.elements if ex and ex.elements else []) or []:
+        name = (el.name or "").strip()
+        if not name:
+            continue
+        bits = [b for b in (el.bits or []) if isinstance(b, int) and 0 <= b <= 4095]
+        fallback_bits_by_name[name] = bits
 
     reg = _seed_registry_key(prefix=pfx, example_id=example_id)
     universe_key = f"{pfx}:all"
@@ -357,13 +365,18 @@ def reset_seed_example(*, r: redis.Redis, prefix: str, example_id: str) -> dict[
     deleted_elements = 0
     for name in names:
         el_key = element_key_with_prefix(pfx, name)
-        flags = r.get(el_key)
         bits: list[int] = []
+        try:
+            flags = r.get(el_key)
+        except redis.exceptions.ResponseError:
+            flags = None
         if isinstance(flags, (bytes, bytearray)) and len(flags) == 512:
             try:
                 bits = decode_flags_bin(bytes(flags))
             except Exception:
                 bits = []
+        if not bits:
+            bits = fallback_bits_by_name.get(name, [])
         pipe.delete(el_key)
         pipe.srem(universe_key, name)
         for b in bits:
@@ -405,7 +418,7 @@ def run_example(
 
     reset_info = None
     if reset:
-        reset_info = reset_seed_example(r=r, prefix=prefix, example_id=example_id)
+        reset_info = reset_seed_example(r=r, prefix=prefix, example_id=example_id, ex=ex)
 
     created_total = 0
     updated_total = 0

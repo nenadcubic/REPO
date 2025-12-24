@@ -108,6 +108,25 @@ Example types:
 Built-in dataset compare example:
 - `northwind_compare` imports from `examples/northwind_compare/assets/northwind.sqlite` into the `or` namespace and compares SQLite vs Redis metrics.
 
+## UI E2E tests (Playwright)
+
+The repo includes an end-to-end UI test suite under `ui_e2e/` (Playwright).
+
+Prereqs:
+- The GUI stack is running (`docker compose -f gui/docker-compose.yml up -d --build`)
+
+Run:
+```bash
+cd ui_e2e
+npm ci
+npx playwright install chromium
+npm test
+```
+
+Optional env vars:
+- `GUI_BASE_URL` (default `http://localhost:18080`)
+- `API_BASE_URL` (default `http://localhost:18000/api/v1`)
+
 ## 5. Verifying the System (Recommended)
 
 ### 5.1 Backend health check

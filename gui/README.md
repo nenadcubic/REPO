@@ -111,6 +111,18 @@ Built-in dataset compare example:
 After the sandbox is up, run:
 - `docker compose -f gui/docker-compose.yml exec -T backend bash -lc /app/scripts/selftest.sh`
 
+## UI E2E tests (Playwright)
+
+The repo includes Playwright end-to-end tests under `ui_e2e/` (outside the `gui/` folder).
+
+Run (from repo root):
+- `docker compose -f gui/docker-compose.yml up -d --build`
+- `cd ui_e2e && npm ci && npx playwright install chromium && npm test`
+
+Optional env vars:
+- `GUI_BASE_URL` (default `http://localhost:${GUI_HTTP_PORT:-18080}`)
+- `API_BASE_URL` (default `http://localhost:${GUI_API_PORT:-18000}/api/v1`)
+
 ## Troubleshooting
 
 - Check health: `curl -sS http://localhost:${GUI_API_PORT:-18000}/api/v1/health` (optionally: `| jq`)

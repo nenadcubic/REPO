@@ -351,7 +351,7 @@ export default function Explorer() {
   }
 
   return (
-    <div className="app">
+    <div className="app" data-testid="explorer-root">
       <aside className="sidebar">
         <div className="sidebar-brand">
           <div className="sidebar-title">element-redis</div>
@@ -386,7 +386,7 @@ export default function Explorer() {
           {error ? <div className="banner error">{error}</div> : null}
 
           <div className="grid3">
-            <div className="panel" style={{ marginTop: 0 }}>
+            <div className="panel" style={{ marginTop: 0 }} data-testid="explorer-namespaces">
               <div className="panel-title">Namespaces</div>
               <label className="label">Filter</label>
               <input
@@ -408,7 +408,7 @@ export default function Explorer() {
               />
             </div>
 
-            <div className="panel" style={{ marginTop: 0 }}>
+            <div className="panel" style={{ marginTop: 0 }} data-testid="explorer-elements">
               <div className="panel-title">Elements</div>
               <div className="help">
                 {selectedNamespace ? (
@@ -629,6 +629,8 @@ function NamespaceTable({
   if (loading) return <div className="muted">Loading namespaces…</div>;
   if (!items.length) return <div className="muted">No namespaces found.</div>;
 
+  const safeId = (s: string) => String(s || "").replace(/[^a-z0-9_-]/gi, "-");
+
   return (
     <div className="table-wrap" style={{ marginTop: 12 }}>
       <table className="table" style={{ minWidth: 0 }}>
@@ -645,6 +647,7 @@ function NamespaceTable({
             return (
               <tr
                 key={ns.name}
+                data-testid={`explorer-ns-row-${safeId(ns.name)}`}
                 className={"clickable " + (isSel ? "selected" : "")}
                 onClick={() => onSelect(ns)}
               >
@@ -679,6 +682,8 @@ function ElementsTable({
   onSort: (k: SortKey) => void;
   onSelect: (it: ElementsListItem) => void;
 }) {
+  const safeId = (s: string) => String(s || "").replace(/[^a-z0-9_-]/gi, "-");
+
   return (
     <div className="table-wrap" style={{ marginTop: 12 }}>
       <table className="table" style={{ minWidth: 0 }}>
@@ -714,6 +719,9 @@ function ElementsTable({
               return (
                 <tr
                   key={it.key}
+                  data-testid="explorer-element-row"
+                  data-element-key={it.key}
+                  data-element-id={safeId(it.short_name)}
                   className={"clickable " + (isSel ? "selected" : "")}
                   onClick={() => onSelect(it)}
                   title={it.key}
@@ -796,7 +804,7 @@ function ElementPanel({
 function ElementDetails({ element }: { element: ElementDetailsResponse }) {
   const setBits = Array.isArray(element.set_bits) ? element.set_bits : [];
   return (
-    <>
+    <div data-testid="explorer-details">
       <div className="help" style={{ marginTop: 0 }}>
         Key: <code>{element.key}</code>
         <br />
@@ -818,7 +826,7 @@ function ElementDetails({ element }: { element: ElementDetailsResponse }) {
           {element.hash?.truncated ? "\n\n(note: fields truncated)" : ""}
         </pre>
       )}
-    </>
+    </div>
   );
 }
 
