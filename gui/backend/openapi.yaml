@@ -1,0 +1,517 @@
+openapi: 3.1.0
+info:
+  title: element-redis GUI API
+  version: 0.1.0
+servers:
+  - url: /
+paths:
+  /api/v1/health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/v1/elements/put:
+    post:
+      operationId: elementsPut
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutRequest"
+      responses:
+        "200":
+          description: Put element
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PutResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/elements/get:
+    get:
+      operationId: elementsGet
+      parameters:
+        - in: query
+          name: name
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            default: 200
+            minimum: 1
+            maximum: 4096
+      responses:
+        "200":
+          description: Get element bits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/query:
+    post:
+      operationId: query
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryRequest"
+      responses:
+        "200":
+          description: Query results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/store:
+    post:
+      operationId: store
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreRequest"
+      responses:
+        "200":
+          description: Store results with TTL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: storeDelete
+      parameters:
+        - in: query
+          name: store_key
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Delete store key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteStoreResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/store/inspect:
+    get:
+      operationId: storeInspect
+      parameters:
+        - in: query
+          name: store_key
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            default: 200
+            minimum: 1
+            maximum: 5000
+      responses:
+        "200":
+          description: Inspect store key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InspectStoreResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/logs:
+    get:
+      operationId: logs
+      parameters:
+        - in: query
+          name: tail
+          required: false
+          schema:
+            type: integer
+            default: 200
+            minimum: 1
+            maximum: 2000
+      responses:
+        "200":
+          description: Tail backend logs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogsResponse"
+components:
+  schemas:
+    Bit:
+      type: integer
+      minimum: 0
+      maximum: 4095
+    Name:
+      type: string
+      minLength: 1
+      maxLength: 100
+    ErrorObject:
+      type: object
+      required: [code, message, details]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+    ErrorResponse:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          const: false
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+    PutRequest:
+      type: object
+      required: [name, bits]
+      properties:
+        name:
+          $ref: "#/components/schemas/Name"
+        bits:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Bit"
+    HealthResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [backend_version, redis]
+          properties:
+            backend_version:
+              type: string
+            preset:
+              type: string
+              nullable: true
+            preset_path:
+              type: string
+              nullable: true
+            redis:
+              type: object
+              required: [ok, ping_ms, used_memory]
+              properties:
+                ok:
+                  type: boolean
+                ping_ms:
+                  type: integer
+                used_memory:
+                  type: integer
+                  nullable: true
+    PutResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [name, written_bits]
+          properties:
+            name:
+              $ref: "#/components/schemas/Name"
+            written_bits:
+              type: integer
+              minimum: 1
+    GetResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [name, bits, count, returned, limit]
+          properties:
+            name:
+              $ref: "#/components/schemas/Name"
+            bits:
+              type: array
+              items:
+                $ref: "#/components/schemas/Bit"
+            count:
+              type: integer
+            returned:
+              type: integer
+            limit:
+              type: integer
+    QueryRequest:
+      oneOf:
+        - type: object
+          required: [type, bit]
+          properties:
+            type:
+              const: find
+            bit:
+              $ref: "#/components/schemas/Bit"
+            limit:
+              type: integer
+              default: 200
+              minimum: 1
+              maximum: 5000
+        - type: object
+          required: [type, bits]
+          properties:
+            type:
+              const: find_all
+            bits:
+              type: array
+              minItems: 2
+              items:
+                $ref: "#/components/schemas/Bit"
+            limit:
+              type: integer
+              default: 200
+              minimum: 1
+              maximum: 5000
+        - type: object
+          required: [type, bits]
+          properties:
+            type:
+              const: find_any
+            bits:
+              type: array
+              minItems: 2
+              items:
+                $ref: "#/components/schemas/Bit"
+            limit:
+              type: integer
+              default: 200
+              minimum: 1
+              maximum: 5000
+        - type: object
+          required: [type, include_bit, exclude_bits]
+          properties:
+            type:
+              const: find_not
+            include_bit:
+              $ref: "#/components/schemas/Bit"
+            exclude_bits:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/Bit"
+            limit:
+              type: integer
+              default: 200
+              minimum: 1
+              maximum: 5000
+        - type: object
+          required: [type, exclude_bits]
+          properties:
+            type:
+              const: find_universe_not
+            exclude_bits:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/Bit"
+            limit:
+              type: integer
+              default: 200
+              minimum: 1
+              maximum: 5000
+    QueryResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [type, count, returned, limit, names]
+          properties:
+            type:
+              type: string
+            count:
+              type: integer
+            returned:
+              type: integer
+            limit:
+              type: integer
+            names:
+              type: array
+              items:
+                type: string
+    StoreRequest:
+      oneOf:
+        - type: object
+          required: [type, ttl_sec, bits]
+          properties:
+            type:
+              const: find_all_store
+            ttl_sec:
+              type: integer
+              exclusiveMinimum: 0
+              maximum: 86400
+            bits:
+              type: array
+              minItems: 2
+              items:
+                $ref: "#/components/schemas/Bit"
+        - type: object
+          required: [type, ttl_sec, bits]
+          properties:
+            type:
+              const: find_any_store
+            ttl_sec:
+              type: integer
+              exclusiveMinimum: 0
+              maximum: 86400
+            bits:
+              type: array
+              minItems: 2
+              items:
+                $ref: "#/components/schemas/Bit"
+        - type: object
+          required: [type, ttl_sec, include_bit, exclude_bits]
+          properties:
+            type:
+              const: find_not_store
+            ttl_sec:
+              type: integer
+              exclusiveMinimum: 0
+              maximum: 86400
+            include_bit:
+              $ref: "#/components/schemas/Bit"
+            exclude_bits:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/Bit"
+    StoreResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [store_key, ttl_remaining, count, preview_limit, preview]
+          properties:
+            store_key:
+              type: string
+            ttl_remaining:
+              type: integer
+            count:
+              type: integer
+            preview_limit:
+              type: integer
+            preview:
+              type: array
+              items:
+                type: string
+    InspectStoreResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [store_key, ttl_remaining, count, returned, limit, names]
+          properties:
+            store_key:
+              type: string
+            ttl_remaining:
+              type: integer
+            count:
+              type: integer
+            returned:
+              type: integer
+            limit:
+              type: integer
+            names:
+              type: array
+              items:
+                type: string
+    DeleteStoreResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [deleted]
+          properties:
+            deleted:
+              type: boolean
+    LogsResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [lines, returned, tail]
+          properties:
+            lines:
+              type: array
+              items:
+                type: string
+            returned:
+              type: integer
+            tail:
+              type: integer
