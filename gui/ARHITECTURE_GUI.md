@@ -39,6 +39,7 @@ Use a **left sidebar** with these sections (MVP):
 - Queries
 - Store + TTL
 - Logs (optional, preferred)
+- Bit-maps (preset metadata)
 
 ### 2.2 Screen structure rule
 Every screen follows this structure:
@@ -83,6 +84,10 @@ Backend responsibilities:
 5. **Operational safety** (health, restart, failure modes)
 
 If a future request does not mention Redis impacts, it is considered **incomplete** and must be updated.
+
+Bit-maps note (v1):
+- Bit-maps are preset metadata only (no Redis keys, no TTL, no atomicity).
+- Matrix hover must use already-fetched element flags (no extra Redis calls per hover).
 
 ---
 
@@ -238,4 +243,3 @@ Docker Compose must include:
 - Errors follow the envelope
 - OpenAPI updated
 - Compose still one-command runnable
-

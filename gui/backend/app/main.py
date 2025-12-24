@@ -15,6 +15,7 @@ from .errors import ApiError, err, ok
 from .models import PutRequest, QueryRequest, StoreRequest
 from .redis_bits import decode_flags_bin, element_key_with_prefix
 from .settings import load_settings
+from .bitmaps import load_bitmaps_from_preset
 
 
 BACKEND_VERSION = "0.1.0"
@@ -110,6 +111,26 @@ async def health() -> dict[str, Any]:
             "redis": {"ok": ok_redis, "ping_ms": ping_ms, "used_memory": used_memory},
         }
     )
+
+
+@app.get("/api/v1/config")
+async def config() -> dict[str, Any]:
+    return ok(
+        {
+            "backend_version": BACKEND_VERSION,
+            "er_prefix": settings.er_prefix,
+            "ttl_max_sec": int(settings.ttl_max_sec),
+            "default_limit": 200,
+            "max_query_limit": 5000,
+            "store_preview_limit": int(settings.store_preview_limit),
+        }
+    )
+
+
+@app.get("/api/v1/bitmaps")
+async def bitmaps() -> dict[str, Any]:
+    data = load_bitmaps_from_preset(presets_dir=settings.presets_dir, preset=settings.gui_preset, logger=logger)
+    return ok(data)
 
 
 @app.post("/api/v1/elements/put")

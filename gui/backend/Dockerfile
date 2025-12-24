@@ -40,9 +40,11 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY gui/backend/app /app/app
 COPY gui/backend/openapi.yaml /app/openapi.yaml
+COPY gui/backend/scripts /app/scripts
 COPY gui/backend/entrypoint.sh /app/entrypoint.sh
 
-RUN chmod +x /app/entrypoint.sh && mkdir -p /app/presets /app/logs
+RUN chmod +x /app/entrypoint.sh /app/scripts/selftest.sh \
+    && mkdir -p /app/presets /app/logs
 
 COPY --from=er_builder /out/er_cli /usr/local/bin/er_cli
 

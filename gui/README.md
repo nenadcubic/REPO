@@ -8,6 +8,9 @@ Architecture contract (GUI-freeze-v1):
 UI copy contract (GUI-freeze-v1):
 - `gui/GUI_COPY.md`
 
+Bit dictionary (preset metadata):
+- `gui/presets/<GUI_PRESET>/bitmaps.json`
+
 ## Run
 
 From repo root:
@@ -40,6 +43,11 @@ All endpoints are versioned under `/api/v1` and return:
 
 OpenAPI 3.1:
 - `gui/backend/openapi.yaml`
+
+## Bit-maps
+
+- Backend loads `bitmaps.json` from the selected preset directory and exposes it via `GET /api/v1/bitmaps`.
+- The GUI caches bit-maps in memory (no per-hover requests).
 
 ## Safety defaults
 

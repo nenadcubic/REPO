@@ -10,6 +10,7 @@ Scope: User GUI copy (labels, help text, messages)
 - **Queries**
 - **Store + TTL**
 - **Logs**
+- **Bit-maps**
 
 ---
 
@@ -194,6 +195,24 @@ Scope: User GUI copy (labels, help text, messages)
 
 ---
 
+## 7.1) Bit-maps Panel
+### Section title: `Bit-maps`
+
+### Description:
+> Browse the bit dictionary loaded from the selected preset.
+
+### Search placeholder:
+`Search by bit, key, name, group, description`
+
+### Columns:
+- `Bit`
+- `Key`
+- `Name`
+- `Group`
+- `Description`
+
+---
+
 ## 8) Validation & Error Messages
 
 ### Shared
@@ -234,4 +253,3 @@ Scope: User GUI copy (labels, help text, messages)
 - No jargon for users (“bitmask”, “set op”, etc.)
 - Use “Element” consistently instead of “record” or “item”
 - Avoid passive voice: prefer `Saved`, not `Was saved`
-

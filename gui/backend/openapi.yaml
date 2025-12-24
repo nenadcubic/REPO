@@ -5,6 +5,26 @@ info:
 servers:
   - url: /
 paths:
+  /api/v1/config:
+    get:
+      operationId: config
+      responses:
+        "200":
+          description: Runtime UI/API configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigResponse"
+  /api/v1/bitmaps:
+    get:
+      operationId: bitmaps
+      responses:
+        "200":
+          description: Bit dictionary resolved from preset metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BitmapsResponse"
   /api/v1/health:
     get:
       operationId: health
@@ -515,3 +535,78 @@ components:
               type: integer
             tail:
               type: integer
+    ConfigResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required:
+            - backend_version
+            - er_prefix
+            - ttl_max_sec
+            - default_limit
+            - max_query_limit
+            - store_preview_limit
+          properties:
+            backend_version:
+              type: string
+            er_prefix:
+              type: string
+            ttl_max_sec:
+              type: integer
+            default_limit:
+              type: integer
+            max_query_limit:
+              type: integer
+            store_preview_limit:
+              type: integer
+    BitmapsResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [schema, meta, groups, defaults, count, items]
+          properties:
+            schema:
+              type: string
+            meta:
+              type: object
+              additionalProperties: true
+            groups:
+              type: object
+              additionalProperties: true
+            defaults:
+              type: object
+              additionalProperties: true
+            count:
+              type: integer
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/BitmapItem"
+    BitmapItem:
+      type: object
+      required: [bit, key, name, group, description, source]
+      properties:
+        bit:
+          $ref: "#/components/schemas/Bit"
+        key:
+          type: string
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        group:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        source:
+          type: string

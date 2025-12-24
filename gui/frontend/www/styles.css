@@ -134,6 +134,76 @@ code { color: var(--muted); }
   line-height: 1.35;
 }
 
+.table-wrap {
+  margin-top: var(--s16);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 820px;
+}
+
+.table th,
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  font-size: 13px;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  background: rgba(7, 14, 30, 0.9);
+  backdrop-filter: blur(6px);
+  z-index: 1;
+  font-weight: 800;
+}
+
+.table td code {
+  color: var(--text);
+}
+
+.table tr:hover td {
+  background: rgba(109, 167, 255, 0.06);
+}
+
+.matrix-wrap {
+  margin-top: var(--s16);
+  position: relative;
+  width: 512px;
+  max-width: 100%;
+}
+
+.matrix-canvas {
+  width: 512px;
+  height: 512px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(4, 9, 20, 0.65);
+  display: block;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(7, 14, 30, 0.92);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .banner {
   border: 1px solid var(--border);
   border-radius: 12px;
