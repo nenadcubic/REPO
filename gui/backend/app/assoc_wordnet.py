@@ -652,53 +652,135 @@ def generate_board(
     _ensure_wordnet_ready(r=r)
     rnd = random.Random(seed) if seed is not None else random.Random()
 
+    # Cache Redis reads during one generation attempt to keep things fast.
+    meta_cache: dict[str, WnMeta | None] = {}
+    bits_cache: dict[str, int | None] = {}
+    rels_cache: dict[str, dict[str, list[str]]] = {}
+
+    def get_meta(syn: str) -> WnMeta | None:
+        if syn in meta_cache:
+            return meta_cache[syn]
+        m = load_meta(r=r, synset=syn)
+        meta_cache[syn] = m
+        return m
+
+    def get_bits(syn: str) -> int | None:
+        if syn in bits_cache:
+            return bits_cache[syn]
+        b = load_bits_int(r=r, synset=syn)
+        bits_cache[syn] = b
+        return b
+
+    def get_rels(syn: str) -> dict[str, list[str]]:
+        if syn in rels_cache:
+            return rels_cache[syn]
+        rels = load_rels(r=r, synset=syn)
+        rels_cache[syn] = rels
+        return rels
+
+    POS_MASK = (1 << BIT_POS_NOUN) | (1 << BIT_POS_VERB) | (1 << BIT_POS_ADJ) | (1 << BIT_POS_ADV)
+
+    def overlap_score(a: int, b: int) -> int:
+        # Exclude POS bits to avoid trivial intersections.
+        return _popcount_and(a & ~POS_MASK, b & ~POS_MASK)
+
     def rand_member(key: str) -> str | None:
         raw = r.srandmember(key)
         if raw is None:
             return None
         return raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
 
-    for _ in range(200):
+    def expand_neighbors(src: str, depth: int, cap: int) -> list[str]:
+        # Small BFS expansion over local WordNet edges to increase domain diversity.
+        out: list[str] = []
+        q: list[tuple[str, int]] = [(src, 0)]
+        seen: set[str] = {src}
+        while q and len(out) < cap:
+            node, d = q.pop(0)
+            if d >= depth:
+                continue
+            neigh = _neighbors(get_rels(node))
+            for n in neigh:
+                if not n or n in seen:
+                    continue
+                seen.add(n)
+                out.append(n)
+                if len(out) >= cap:
+                    break
+                q.append((n, d + 1))
+        return out
+
+    def sample_by_domain(domain: str, tries: int) -> list[str]:
+        key = f"wn:idx:domain:{domain}"
+        out: list[str] = []
+        for _ in range(tries):
+            s = rand_member(key)
+            if not s:
+                continue
+            out.append(s)
+        return out
+
+    for _ in range(800):
         fin = rand_member("wn:idx:pos:n") or rand_member("wn:all")
         if not fin:
             break
-        fin_meta = load_meta(r=r, synset=fin)
-        fin_bits = load_bits_int(r=r, synset=fin) or 0
+        fin_meta = get_meta(fin)
+        fin_bits = get_bits(fin) or 0
         fin_dom = _pick_primary_domain(fin_meta)
         if not fin_dom:
             continue
 
-        rels = load_rels(r=r, synset=fin)
-        neigh = _neighbors(rels)
-        if len(neigh) < 4:
-            continue
+        # Prefer structurally-related candidates, but expand outwards to get enough unique domains.
+        neigh = expand_neighbors(fin, depth=2, cap=400)
 
         scored: list[tuple[int, str, str]] = []  # score, synset, domain
         for s in neigh:
-            meta = load_meta(r=r, synset=s)
+            meta = get_meta(s)
             dom = _pick_primary_domain(meta)
             if not dom:
                 continue
-            bits = load_bits_int(r=r, synset=s)
+            bits = get_bits(s)
             if bits is None:
                 continue
-            score = _popcount_and(fin_bits, int(bits))
+            score = overlap_score(fin_bits, int(bits))
             if score <= 0:
                 continue
             scored.append((score, s, dom))
-        if len(scored) < 4:
-            continue
         scored.sort(reverse=True)
 
-        used_domains: set[str] = set()
-        cols: list[dict[str, Any]] = []
-        for _, syn, dom in scored:
-            if dom in used_domains:
+        # Pick column solutions with distinct domains.
+        domain_to_best: dict[str, tuple[int, str]] = {}
+        for sc, syn, dom in scored[:2000]:
+            cur = domain_to_best.get(dom)
+            if cur is None or sc > cur[0]:
+                domain_to_best[dom] = (sc, syn)
+
+        # If we still don't have enough distinct domains, supplement with domain-index sampling.
+        all_domains = list(DOMAIN_BITS.keys())
+        rnd.shuffle(all_domains)
+        for dom in all_domains:
+            if dom in domain_to_best:
                 continue
-            meta = load_meta(r=r, synset=syn)
+            best: tuple[int, str] | None = None
+            for cand in sample_by_domain(dom, tries=40):
+                b = get_bits(cand)
+                if b is None:
+                    continue
+                sc = overlap_score(fin_bits, int(b))
+                if sc <= 0:
+                    continue
+                if best is None or sc > best[0]:
+                    best = (sc, cand)
+            if best is not None:
+                domain_to_best[dom] = best
+            if len(domain_to_best) >= 6:
+                break
+
+        cols: list[dict[str, Any]] = []
+        for dom, (sc, syn) in sorted(domain_to_best.items(), key=lambda kv: kv[1][0], reverse=True):
+            meta = get_meta(syn)
             if not meta:
                 continue
-            used_domains.add(dom)
             cols.append({"synset": syn, "lemma": meta.lemma, "domain": dom})
             if len(cols) >= 4:
                 break
@@ -709,28 +791,28 @@ def generate_board(
         for i, col in enumerate(cols):
             cid = "ABCD"[i]
             syn = col["synset"]
-            meta = load_meta(r=r, synset=syn)
+            meta = get_meta(syn)
             if not meta:
                 break
-            bits_col = load_bits_int(r=r, synset=syn) or 0
-            c_rels = load_rels(r=r, synset=syn)
-            candidates = _neighbors(c_rels)
-            if len(candidates) < 4:
-                break
+            bits_col = get_bits(syn) or 0
+
+            candidates = expand_neighbors(syn, depth=2, cap=600)
+
             cand_scored: list[tuple[int, str, str, str]] = []  # score, syn, dom, lemma
             for s in candidates:
-                m = load_meta(r=r, synset=s)
+                m = get_meta(s)
                 d = _pick_primary_domain(m)
                 if not d or not m:
                     continue
-                b = load_bits_int(r=r, synset=s)
+                b = get_bits(s)
                 if b is None:
                     continue
-                sc = _popcount_and(bits_col, int(b))
+                sc = overlap_score(bits_col, int(b))
                 if sc <= 0:
                     continue
                 cand_scored.append((sc, s, d, m.lemma))
             cand_scored.sort(reverse=True)
+
             used: set[str] = set()
             clues: list[dict[str, Any]] = []
             for _, s, d, lemma in cand_scored:
@@ -740,8 +822,19 @@ def generate_board(
                 clues.append({"synset": s, "lemma": lemma, "domain": d})
                 if len(clues) >= 4:
                     break
+
+            # If strict diversity isn't possible from the local graph, fall back to best-scoring clues.
+            if len(clues) < 4:
+                for _, s, d, lemma in cand_scored:
+                    if len(clues) >= 4:
+                        break
+                    if any(c["synset"] == s for c in clues):
+                        continue
+                    clues.append({"synset": s, "lemma": lemma, "domain": d})
+
             if len(clues) < 4:
                 break
+
             col_objs.append({"id": cid, "synset": syn, "lemma": meta.lemma, "domain": col["domain"], "clues": clues})
 
         if len(col_objs) != 4:
