@@ -50,3 +50,13 @@
 .explorer-list-item.selected {
   background: rgba(109, 167, 255, 0.1);
 }
+
+.assoc-input.correct {
+  border-color: rgba(56, 217, 169, 0.75);
+  box-shadow: 0 0 0 2px rgba(56, 217, 169, 0.2);
+}
+
+.assoc-input.wrong {
+  border-color: rgba(255, 109, 122, 0.75);
+  box-shadow: 0 0 0 2px rgba(255, 109, 122, 0.2);
+}

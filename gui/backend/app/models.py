@@ -83,3 +83,38 @@ StoreRequest = StoreFindAll | StoreFindAny | StoreFindNot
 class ExamplesRunRequest(BaseModel):
     ns: str | None = None
     reset: bool | None = None
+
+
+class AssocCheckRequest(BaseModel):
+    cell: Annotated[str, Field(min_length=1, max_length=16)]
+    guess: Annotated[str, Field(min_length=0, max_length=128)]
+
+
+class AssocHintRequest(BaseModel):
+    cell: Annotated[str, Field(min_length=1, max_length=16)]
+    kind: Literal["first_letter", "reveal"] = "first_letter"
+
+
+class NorthwindDataIngestRequest(BaseModel):
+    ns: str | None = None
+    reset: bool | None = None
+    tables: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = None
+    max_rows_per_table: Annotated[int, Field(default=0, ge=0, le=200_000)] = 0
+
+
+class NorthwindPredicateCondition(BaseModel):
+    column: Annotated[str, Field(min_length=1, max_length=64)]
+    op: Literal["=", "<", "<=", ">", ">="] = "="
+    value: Annotated[str, Field(max_length=128)]
+
+
+class NorthwindPredicate(BaseModel):
+    type: Literal["and"] = "and"
+    conditions: list[NorthwindPredicateCondition] = Field(default_factory=list, max_length=20)
+
+
+class NorthwindCompareRequest(BaseModel):
+    ns: str | None = None
+    table: Annotated[str, Field(min_length=1, max_length=64)]
+    predicate: NorthwindPredicate
+    sample: Annotated[int, Field(default=25, ge=0, le=200)] = 25

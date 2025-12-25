@@ -99,7 +99,14 @@ API (Explorer):
   - `GET /api/v1/examples/{id}/reports?ns=...` (dataset compare examples only; `ns` defaults to the example namespace)
 
 Built-in dataset compare example:
-- `northwind_compare`: imports Northwind from `examples/northwind_compare/assets/northwind.sqlite` into the `or` namespace (OR layout), then compares row counts and sample order totals.
+- `northwind_compare`: imports Northwind from `examples/northwind_compare/assets/northwind.sqlite` into the `or` namespace (OR layout), then compares row counts and sample order totals. It also ingests SQLite schema metadata as bitset Elements and exposes it under `http://localhost:${GUI_HTTP_PORT:-18080}/explorer/schema/`.
+
+## WordNet Associations
+
+The GUI includes a WordNet-backed “Associations” page at:
+- `http://localhost:${GUI_HTTP_PORT:-18080}/explorer/assoc/`
+
+It uses backend endpoints under `/api/v1/assoc/...`. If WordNet is not ingested yet, use the demo mode button in the UI or ingest WordNet via `tools/wn_ingest/`.
 
 ## Safety defaults
 

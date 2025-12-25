@@ -106,7 +106,25 @@ Example types:
 - `dataset_compare`: imports a dataset (for example from SQLite) and provides comparison reports
 
 Built-in dataset compare example:
-- `northwind_compare` imports from `examples/northwind_compare/assets/northwind.sqlite` into the `or` namespace and compares SQLite vs Redis metrics.
+- `northwind_compare` imports from `examples/northwind_compare/assets/northwind.sqlite` into the `or` namespace and compares SQLite vs Redis metrics. It also ingests SQLite schema metadata as 4096-bit Element records (profile `northwind_meta_v0`) and exposes it in the Schema Explorer UI.
+
+## Northwind: Data vs Bitsets
+
+In addition to schema metadata, the GUI also includes a demo that ingests **row data** as 4096-bit integers and compares:
+- Classic SQL selection on the SQLite DB
+- Bitset-based selection on Redis keys under `or:data:*` (bucketed/approximate)
+
+UI:
+- Open `http://localhost:18080/explorer/data/`
+- Click `Run data ingest…`
+- Pick a table + preset predicate, then `Run comparison`
+
+Storage:
+- Row bitsets: `or:data:<TableName>:<RowId>` → decimal string integer (4096-bit)
+- Reset registry: `or:import:northwind_compare:data_bits`
+
+UI tests:
+- `cd UI_tests && npx playwright test tests/11_northwind_data_vs_bitsets.spec.ts`
 
 ## UI E2E tests (Playwright)
 
@@ -126,6 +144,26 @@ npm test
 Optional env vars:
 - `GUI_BASE_URL` (default `http://localhost:18080`)
 - `API_BASE_URL` (default `http://localhost:18000/api/v1`)
+
+Schema Explorer (Northwind meta):
+- After running `northwind_compare` (namespace `or`), open `http://localhost:18080/explorer/schema/` to browse tables, columns, and relations decoded from the `northwind_meta_v0` bit-profile.
+
+## WordNet Associations Example
+
+The repo includes a WordNet-backed “Associations” game that demonstrates using 4096-bit bitsets for lightweight semantic tagging and reasoning.
+
+Components:
+- WordNet ingest tool: `tools/wn_ingest/wordnet_to_bitset.py` → writes `wn:dict:*` (bitset ints) plus `wn:meta:*` / `wn:rels:*`
+- Backend API: `/api/v1/assoc/...` serves boards, checks, hints, and explanations
+- UI: `http://localhost:18080/explorer/assoc/` (demo mode available)
+
+Run:
+1) Start the GUI stack: `docker compose -f gui/docker-compose.yml up -d --build`
+2) Ingest WordNet into Redis (see `tools/wn_ingest/README.md`)
+3) Open `http://localhost:18080/explorer/assoc/`
+
+UI tests:
+- `cd UI_tests && npx playwright test tests/10_assoc_wordnet.spec.ts`
 
 ## 5. Verifying the System (Recommended)
 

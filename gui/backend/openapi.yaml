@@ -345,6 +345,72 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/explorer/northwind/data_info:
+    get:
+      operationId: northwindDataInfo
+      parameters:
+        - in: query
+          name: ns
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Northwind row-bitset ingest info (counts by table)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NorthwindDataInfoResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/explorer/northwind/data_ingest:
+    post:
+      operationId: northwindDataIngest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NorthwindDataIngestRequest"
+      responses:
+        "200":
+          description: Ingest Northwind row data as bitsets into Redis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NorthwindDataIngestResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/explorer/northwind/compare:
+    post:
+      operationId: northwindCompareSqlVsBitsets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NorthwindCompareRequest"
+      responses:
+        "200":
+          description: Compare SQL selection vs Redis row-bitset selection (bucketed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NorthwindCompareResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/v1/elements/put:
     post:
       operationId: elementsPut
@@ -552,6 +618,199 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LogsResponse"
+  /api/v1/schema/tables:
+    get:
+      operationId: schemaTables
+      parameters:
+        - in: query
+          name: ns
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List ingested schema tables (northwind_meta_v0)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchemaTablesResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/schema/tables/{table}:
+    get:
+      operationId: schemaTable
+      parameters:
+        - in: path
+          name: table
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: ns
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Schema details (columns + relations) for a table (northwind_meta_v0)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchemaTableDetailsResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/assoc/board/random:
+    get:
+      operationId: assocBoardRandom
+      parameters:
+        - in: query
+          name: seed
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: mode
+          required: false
+          schema:
+            type: string
+            description: Optional mode, e.g. "demo"
+      responses:
+        "200":
+          description: Random or demo associations board
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssocBoardResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/assoc/status:
+    get:
+      operationId: assocStatus
+      responses:
+        "200":
+          description: WordNet ingest status for Associations UI
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssocStatusResponse"
+  /api/v1/assoc/board/{id}:
+    get:
+      operationId: assocBoardGet
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Get a board by id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssocBoardResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/assoc/board/{id}/check:
+    post:
+      operationId: assocBoardCheck
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssocCheckRequest"
+      responses:
+        "200":
+          description: Check a guess against a board cell
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssocCheckResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/assoc/board/{id}/hint:
+    post:
+      operationId: assocBoardHint
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssocHintRequest"
+      responses:
+        "200":
+          description: Hint for a board cell
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssocHintResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/assoc/board/{id}/explain:
+    get:
+      operationId: assocBoardExplain
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Explain relationships for a board
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssocExplainResponse"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     Bit:
@@ -910,6 +1169,439 @@ components:
             returned:
               type: integer
             tail:
+              type: integer
+    SchemaTablesResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [ns, prefix, tables]
+          properties:
+            ns:
+              type: string
+            prefix:
+              type: string
+            tables:
+              type: array
+              items:
+                $ref: "#/components/schemas/SchemaTableListItem"
+    SchemaTableListItem:
+      type: object
+      required: [table, key]
+      properties:
+        table:
+          type: string
+        key:
+          type: string
+    SchemaTableDetailsResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [ns, prefix, table, columns, relations]
+          properties:
+            ns:
+              type: string
+            prefix:
+              type: string
+            table:
+              type: string
+            columns:
+              type: array
+              items:
+                $ref: "#/components/schemas/SchemaColumnMeta"
+            relations:
+              type: array
+              items:
+                $ref: "#/components/schemas/SchemaRelationMeta"
+    SchemaColumnMeta:
+      type: object
+      required: [name, type_family, not_null, has_default, is_pk, is_fk, has_index, length_bucket, key]
+      properties:
+        name:
+          type: string
+        type_family:
+          type: string
+          nullable: true
+        not_null:
+          type: boolean
+          nullable: true
+        has_default:
+          type: boolean
+        is_pk:
+          type: boolean
+        is_fk:
+          type: boolean
+        has_index:
+          type: boolean
+        length_bucket:
+          type: string
+          nullable: true
+        key:
+          type: string
+    SchemaRelationMeta:
+      type: object
+      required:
+        - from_table
+        - to_table
+        - fk
+        - direction
+        - cardinality
+        - child_required
+        - on_delete
+        - on_update
+        - key
+      properties:
+        from_table:
+          type: string
+        to_table:
+          type: string
+        fk:
+          type: string
+        direction:
+          type: string
+          enum: [from, to, other]
+        cardinality:
+          type: string
+          nullable: true
+        child_required:
+          type: boolean
+          nullable: true
+        on_delete:
+          type: string
+          nullable: true
+        on_update:
+          type: string
+          nullable: true
+        key:
+          type: string
+    AssocBoardResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          $ref: "#/components/schemas/AssocBoard"
+    AssocBoard:
+      type: object
+      required: [id, final, columns]
+      properties:
+        id:
+          type: string
+        final:
+          $ref: "#/components/schemas/AssocCell"
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssocColumn"
+    AssocCell:
+      type: object
+      required: [synset, lemma, domain]
+      properties:
+        synset:
+          type: string
+        lemma:
+          type: string
+        domain:
+          type: string
+    AssocColumn:
+      type: object
+      required: [id, synset, lemma, domain, clues]
+      properties:
+        id:
+          type: string
+        synset:
+          type: string
+        lemma:
+          type: string
+        domain:
+          type: string
+        clues:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssocCell"
+    AssocCheckRequest:
+      type: object
+      required: [cell, guess]
+      properties:
+        cell:
+          type: string
+        guess:
+          type: string
+    AssocCheckResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [id, cell, correct, normalized, target, synset]
+          properties:
+            id:
+              type: string
+            cell:
+              type: string
+            correct:
+              type: boolean
+            normalized:
+              type: string
+            target:
+              type: string
+            synset:
+              type: string
+    AssocHintRequest:
+      type: object
+      required: [cell, kind]
+      properties:
+        cell:
+          type: string
+        kind:
+          type: string
+          enum: [first_letter, reveal]
+    AssocHintResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [id, cell, kind, hint]
+          properties:
+            id:
+              type: string
+            cell:
+              type: string
+            kind:
+              type: string
+            hint:
+              type: string
+    AssocExplainResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          additionalProperties: true
+    AssocStatusResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [wordnet, ingest_commands]
+          properties:
+            wordnet:
+              type: object
+              required: [kind, wn_all_count, wn_noun_count, demo_board_present]
+              properties:
+                kind:
+                  type: string
+                  enum: [none, demo_or_small, full_or_partial]
+                wn_all_count:
+                  type: integer
+                wn_noun_count:
+                  type: integer
+                demo_board_present:
+                  type: boolean
+            ingest_commands:
+              type: object
+              required: [host_python, docker_network, note]
+              properties:
+                host_python:
+                  type: string
+                docker_network:
+                  type: string
+                note:
+                  type: string
+    NorthwindDataIngestRequest:
+      type: object
+      properties:
+        ns:
+          type: string
+          nullable: true
+        reset:
+          type: boolean
+          nullable: true
+        tables:
+          type: array
+          nullable: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+        max_rows_per_table:
+          type: integer
+          default: 0
+          minimum: 0
+          maximum: 200000
+    NorthwindPredicateCondition:
+      type: object
+      required: [column, op, value]
+      properties:
+        column:
+          type: string
+          minLength: 1
+          maxLength: 64
+        op:
+          type: string
+          enum: ["=", "<", "<=", ">", ">="]
+          default: "="
+        value:
+          type: string
+          maxLength: 128
+    NorthwindPredicate:
+      type: object
+      required: [type, conditions]
+      properties:
+        type:
+          const: and
+        conditions:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/NorthwindPredicateCondition"
+    NorthwindCompareRequest:
+      type: object
+      required: [table, predicate]
+      properties:
+        ns:
+          type: string
+          nullable: true
+        table:
+          type: string
+          minLength: 1
+          maxLength: 64
+        predicate:
+          $ref: "#/components/schemas/NorthwindPredicate"
+        sample:
+          type: integer
+          default: 25
+          minimum: 0
+          maximum: 200
+    NorthwindDataInfoResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [ns, prefix, registry_key, total, counts_by_table]
+          properties:
+            ns:
+              type: string
+            prefix:
+              type: string
+            registry_key:
+              type: string
+            total:
+              type: integer
+            counts_by_table:
+              type: object
+              additionalProperties:
+                type: integer
+    NorthwindDataIngestResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [ns, prefix, registry_key, created_by_table, processed_by_table, elapsed_ms]
+          properties:
+            ns:
+              type: string
+            prefix:
+              type: string
+            registry_key:
+              type: string
+            created_by_table:
+              type: object
+              additionalProperties:
+                type: integer
+            processed_by_table:
+              type: object
+              additionalProperties:
+                type: integer
+            elapsed_ms:
+              type: integer
+    NorthwindCompareResult:
+      type: object
+      required: [count, ids]
+      properties:
+        count:
+          type: integer
+        ids:
+          type: array
+          items:
+            type: string
+    NorthwindCompareResponse:
+      type: object
+      required: [ok, data]
+      properties:
+        ok:
+          const: true
+        data:
+          type: object
+          required: [ns, prefix, table, sql, bitset_filter, results, elapsed_ms]
+          properties:
+            ns:
+              type: string
+            prefix:
+              type: string
+            table:
+              type: string
+            sql:
+              type: object
+              required: [query, params]
+              properties:
+                query:
+                  type: string
+                params:
+                  type: array
+                  items:
+                    type: string
+            bitset_filter:
+              type: object
+              required: [conditions, bits]
+              properties:
+                conditions:
+                  type: array
+                  items:
+                    type: string
+                bits:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/Bit"
+            results:
+              type: object
+              required: [sql, bitset, intersection, only_sql, only_bitset]
+              properties:
+                sql:
+                  $ref: "#/components/schemas/NorthwindCompareResult"
+                bitset:
+                  $ref: "#/components/schemas/NorthwindCompareResult"
+                intersection:
+                  $ref: "#/components/schemas/NorthwindCompareResult"
+                only_sql:
+                  $ref: "#/components/schemas/NorthwindCompareResult"
+                only_bitset:
+                  $ref: "#/components/schemas/NorthwindCompareResult"
+            elapsed_ms:
               type: integer
     ConfigResponse:
       type: object

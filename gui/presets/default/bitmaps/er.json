@@ -6,33 +6,121 @@
     "updated_utc": "2025-12-24T00:00:00Z"
   },
   "groups": {
-    "status": { "label": "Status", "order": 10, "color": "blue" },
-    "risk": { "label": "Risk", "order": 20, "color": "red" },
-    "region": { "label": "Region", "order": 30, "color": "green" },
-    "feature": { "label": "Feature", "order": 40, "color": "purple" }
+    "status": {
+      "label": "Status",
+      "order": 10,
+      "color": "blue"
+    },
+    "risk": {
+      "label": "Risk",
+      "order": 20,
+      "color": "red"
+    },
+    "region": {
+      "label": "Region",
+      "order": 30,
+      "color": "green"
+    },
+    "feature": {
+      "label": "Feature",
+      "order": 40,
+      "color": "purple"
+    }
   },
-  "labels": { "UNNAMED_PREFIX": "Bit", "UNKNOWN_NAME": "UNKNOWN" },
+  "labels": {
+    "UNNAMED_PREFIX": "Bit",
+    "UNKNOWN_NAME": "UNKNOWN"
+  },
   "defaults": {
     "group": "status",
     "format": "{name}: {value}",
     "missing_name_format": "{labels.UNNAMED_PREFIX} {bit}: {value}"
   },
   "items": [
-    { "bit": 0, "key": "IS_ACTIVE", "name": "Active", "group": "status", "description": "Element is active." },
-    { "bit": 1, "key": "IS_VERIFIED", "name": "Verified", "group": "status", "description": "Element is verified." },
-    { "bit": 7, "key": "HAS_FLAG_7", "name": "Flag 7", "group": "status", "description": "Example flag." },
-
-    { "bit": 100, "key": "RISK_LOW", "name": "Risk: Low", "group": "risk", "description": "Low risk." },
-    { "bit": 101, "key": "RISK_MED", "name": "Risk: Medium", "group": "risk", "description": "Medium risk." },
-    { "bit": 102, "key": "RISK_HIGH", "name": "Risk: High", "group": "risk", "description": "High risk." },
-
-    { "bit": 200, "key": "REGION_US", "name": "Region: US", "group": "region", "description": "United States." },
-    { "bit": 201, "key": "REGION_EU", "name": "Region: EU", "group": "region", "description": "Europe." },
-    { "bit": 202, "key": "REGION_APAC", "name": "Region: APAC", "group": "region", "description": "Asia-Pacific." },
-
-    { "bit": 300, "key": "FEATURE_CORE", "name": "Feature: Core", "group": "feature", "description": "Core feature set." },
-    { "bit": 301, "key": "FEATURE_PLUS", "name": "Feature: Plus", "group": "feature", "description": "Plus feature set." },
-    { "bit": 302, "key": "FEATURE_BETA", "name": "Feature: Beta", "group": "feature", "description": "Beta feature enabled." }
+    {
+      "bit": 0,
+      "key": "IS_ACTIVE",
+      "name": "Active",
+      "description": "Element is active.",
+      "group": "status"
+    },
+    {
+      "bit": 1,
+      "key": "IS_VERIFIED",
+      "name": "Verified",
+      "description": "Element is verified.",
+      "group": "status"
+    },
+    {
+      "bit": 7,
+      "key": "HAS_FLAG_7",
+      "name": "Flag 7",
+      "description": "Example flag.",
+      "group": "status"
+    },
+    {
+      "bit": 100,
+      "key": "RISK_LOW",
+      "name": "Risk: Low",
+      "description": "Low risk.",
+      "group": "risk"
+    },
+    {
+      "bit": 101,
+      "key": "RISK_MED",
+      "name": "Risk: Medium",
+      "description": "Medium risk.",
+      "group": "risk"
+    },
+    {
+      "bit": 102,
+      "key": "RISK_HIGH",
+      "name": "Risk: High",
+      "description": "High risk.",
+      "group": "risk"
+    },
+    {
+      "bit": 200,
+      "key": "REGION_US",
+      "name": "Region: US",
+      "description": "United States.",
+      "group": "region"
+    },
+    {
+      "bit": 201,
+      "key": "REGION_EU",
+      "name": "Region: EU",
+      "description": "Europe.",
+      "group": "region"
+    },
+    {
+      "bit": 202,
+      "key": "REGION_APAC",
+      "name": "Region: APAC",
+      "description": "Asia-Pacific.",
+      "group": "region"
+    },
+    {
+      "bit": 300,
+      "key": "FEATURE_CORE",
+      "name": "Feature: Core",
+      "description": "Core feature set.",
+      "group": "feature"
+    },
+    {
+      "bit": 301,
+      "key": "FEATURE_PLUS",
+      "name": "Feature: Plus",
+      "description": "Plus feature set.",
+      "group": "feature"
+    },
+    {
+      "bit": 302,
+      "key": "FEATURE_BETA",
+      "name": "Feature: Beta",
+      "description": "Beta feature enabled.",
+      "group": "feature"
+    }
   ],
   "ranges": []
 }

@@ -5,11 +5,13 @@ import time
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 import redis
 
 from .errors import ApiError
+from .redis_bits import element_key_with_prefix
+from .schema_meta import PROFILE_ID, bits_for_column, bits_for_relation, bits_for_table, encode_flags_bin
 
 TABLE_TOKENS: list[str] = [
     "Customers",
@@ -145,6 +147,26 @@ def _pk_columns(conn: sqlite3.Connection, sql_table: str) -> list[str]:
     return cols
 
 
+def _table_info(conn: sqlite3.Connection, sql_table: str) -> list[sqlite3.Row]:
+    conn.row_factory = sqlite3.Row
+    return cast(list[sqlite3.Row], conn.execute(f"PRAGMA table_info({sql_table!r})").fetchall())
+
+
+def _index_list(conn: sqlite3.Connection, sql_table: str) -> list[sqlite3.Row]:
+    conn.row_factory = sqlite3.Row
+    return cast(list[sqlite3.Row], conn.execute(f"PRAGMA index_list({sql_table!r})").fetchall())
+
+
+def _index_info(conn: sqlite3.Connection, index_name: str) -> list[sqlite3.Row]:
+    conn.row_factory = sqlite3.Row
+    return cast(list[sqlite3.Row], conn.execute(f"PRAGMA index_info({index_name!r})").fetchall())
+
+
+def _fk_list(conn: sqlite3.Connection, sql_table: str) -> list[sqlite3.Row]:
+    conn.row_factory = sqlite3.Row
+    return cast(list[sqlite3.Row], conn.execute(f"PRAGMA foreign_key_list({sql_table!r})").fetchall())
+
+
 def _row_pk(row: sqlite3.Row, pk_cols: list[str]) -> str:
     if not pk_cols:
         raise ApiError("INVALID_INPUT", "table has no primary key", status_code=422)
@@ -164,7 +186,7 @@ def _iter_rows(conn: sqlite3.Connection, sql_table: str) -> Iterable[sqlite3.Row
         yield row
 
 
-def _hset_mapping(pipe: redis.client.Pipeline, key: str, mapping: dict[str, str]) -> None:
+def _hset_mapping(pipe: redis.client.Pipeline, key: str, mapping: dict[str, Any]) -> None:
     # redis-py typing differs across versions; keep a small wrapper.
     pipe.hset(key, mapping=mapping)
 
@@ -266,6 +288,175 @@ def reset_import(*, r: redis.Redis, prefix: str, tpl: OrLayoutTemplates) -> dict
     return {"scanned": int(scanned), "deleted_objects": int(deleted)}
 
 
+def _schema_meta_registry_key(*, prefix: str) -> str:
+    pfx = (prefix or "").strip(":")
+    return f"{pfx}:import:northwind_compare:schema_meta"
+
+
+def reset_schema_meta(*, r: redis.Redis, prefix: str) -> dict[str, Any]:
+    pfx = (prefix or "").strip(":")
+    if not pfx:
+        raise ApiError("INVALID_INPUT", "invalid namespace prefix", status_code=422)
+
+    reg = _schema_meta_registry_key(prefix=pfx)
+    names_raw = r.smembers(reg)
+    names = [n.decode("utf-8", errors="replace") if isinstance(n, (bytes, bytearray)) else str(n) for n in names_raw]
+    names = [n for n in names if n]
+
+    pipe = r.pipeline(transaction=False)
+    deleted = 0
+    for name in names:
+        pipe.delete(element_key_with_prefix(pfx, name))
+        deleted += 1
+    pipe.delete(reg)
+
+    # Safety cleanup for older runs (or interrupted resets): scan known patterns.
+    extra_deleted = 0
+    for pat in (f"{pfx}:element:tbl:*", f"{pfx}:element:col:*", f"{pfx}:element:rel:*"):
+        for raw_key in r.scan_iter(match=pat, count=1000):
+            k = raw_key.decode("utf-8", errors="replace") if isinstance(raw_key, (bytes, bytearray)) else str(raw_key)
+            pipe.delete(k)
+            extra_deleted += 1
+            if extra_deleted >= 50_000:
+                break
+        if extra_deleted >= 50_000:
+            break
+
+    pipe.execute()
+    return {"registry_scanned": len(names), "deleted": deleted + extra_deleted}
+
+
+def _safe_element_name(name: str) -> str | None:
+    s = (name or "").strip()
+    if not s or len(s) > 100:
+        return None
+    return s
+
+
+def import_schema_meta(
+    *,
+    r: redis.Redis,
+    prefix: str,
+    conn: sqlite3.Connection,
+    table_map: dict[str, str],
+    logger: Any,
+) -> dict[str, Any]:
+    pfx = (prefix or "").strip(":")
+    if not pfx:
+        raise ApiError("INVALID_INPUT", "invalid namespace prefix", status_code=422)
+
+    sql_to_token = {sql.lower(): token for token, sql in table_map.items()}
+    reg = _schema_meta_registry_key(prefix=pfx)
+
+    pipe = r.pipeline(transaction=False)
+    queued = 0
+    max_queued = 8000
+
+    created = 0
+    skipped = 0
+
+    def write_meta(name: str, bits: set[int]) -> None:
+        nonlocal created, queued, pipe
+        nm = _safe_element_name(name)
+        if not nm:
+            return
+        key = element_key_with_prefix(pfx, nm)
+        flags_bin = encode_flags_bin(bits)
+        _hset_mapping(pipe, key, {"name": nm, "meta_profile": PROFILE_ID, "flags_bin": flags_bin})
+        pipe.sadd(reg, nm)
+        created += 1
+        queued += 2
+        if queued >= max_queued:
+            pipe.execute()
+            pipe = r.pipeline(transaction=False)
+            queued = 0
+
+    for token, sql_table in table_map.items():
+        write_meta(f"tbl:{token}", bits_for_table())
+
+        ti = _table_info(conn, sql_table)
+        col_notnull: dict[str, bool] = {}
+        col_default: dict[str, bool] = {}
+        col_pk: set[str] = set()
+        declared_type: dict[str, str] = {}
+        for row in ti:
+            col = str(row["name"])
+            declared_type[col] = str(row["type"] or "")
+            col_notnull[col] = bool(int(row["notnull"] or 0))
+            col_default[col] = row["dflt_value"] is not None
+            if int(row["pk"] or 0) > 0:
+                col_pk.add(col)
+
+        idx_rows = _index_list(conn, sql_table)
+        indexed_cols: set[str] = set()
+        unique_sets: list[set[str]] = []
+        for idx in idx_rows:
+            idx_name = str(idx["name"] or "")
+            if not idx_name:
+                continue
+            unique = bool(int(idx["unique"] or 0))
+            origin = str(idx["origin"] or "") if "origin" in idx.keys() else ""
+            cols: set[str] = set()
+            for r0 in _index_info(conn, idx_name):
+                if "name" in r0.keys() and r0["name"]:
+                    cols.add(str(r0["name"]))
+            if unique and cols:
+                unique_sets.append(cols)
+            if origin == "c" and cols:
+                indexed_cols |= cols
+
+        fk_rows = _fk_list(conn, sql_table)
+        fks_by_id: dict[int, list[sqlite3.Row]] = {}
+        for rw in fk_rows:
+            fk_id = int(rw["id"])
+            fks_by_id.setdefault(fk_id, []).append(rw)
+
+        fk_cols_all: set[str] = set()
+        for fk_id, rows in fks_by_id.items():
+            ref_sql = str(rows[0]["table"] or "")
+            to_token = sql_to_token.get(ref_sql.lower()) or ref_sql.replace(" ", "")
+            fk_cols = [str(rw["from"] or "") for rw in rows]
+            fk_cols = [c for c in fk_cols if c]
+            fk_cols_set = set(fk_cols)
+            fk_cols_all |= fk_cols_set
+            child_mandatory = all(col_notnull.get(c, False) for c in fk_cols)
+
+            pk_cols = set(_pk_columns(conn, sql_table))
+            is_unique_child = (fk_cols_set and fk_cols_set == pk_cols) or any(fk_cols_set == u for u in unique_sets)
+
+            on_update = str(rows[0]["on_update"] or "")
+            on_delete = str(rows[0]["on_delete"] or "")
+            rel_bits = bits_for_relation(
+                is_unique_child=is_unique_child,
+                child_mandatory=child_mandatory,
+                on_delete=on_delete,
+                on_update=on_update,
+            )
+            write_meta(f"rel:{token}:{to_token}:fk{fk_id}", rel_bits)
+
+        for col, decl in declared_type.items():
+            is_fk = col in fk_cols_all
+            c_bits = bits_for_column(
+                declared_type=decl,
+                not_null=col_notnull.get(col, False) or (col in col_pk),
+                has_default=col_default.get(col, False),
+                is_pk=(col in col_pk),
+                is_fk=is_fk,
+                has_index=(col in indexed_cols),
+            )
+            nm = f"col:{token}:{col}"
+            if _safe_element_name(nm) is None:
+                skipped += 1
+                continue
+            write_meta(nm, c_bits)
+
+    if queued:
+        pipe.execute()
+
+    logger.info("northwind_compare schema_meta ns_prefix=%s created=%d skipped=%d", pfx, created, skipped)
+    return {"profile": PROFILE_ID, "created": created, "skipped": skipped, "registry_key": reg}
+
+
 def import_northwind(
     *,
     r: redis.Redis,
@@ -281,8 +472,10 @@ def import_northwind(
 
     t0 = time.perf_counter()
     reset_info = None
+    reset_schema_info = None
     if reset:
         reset_info = reset_import(r=r, prefix=pfx, tpl=tpl)
+        reset_schema_info = reset_schema_meta(r=r, prefix=pfx)
 
     conn = sqlite3.connect(str(sqlite_path))
     conn.row_factory = sqlite3.Row
@@ -354,14 +547,19 @@ def import_northwind(
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     logger.info("northwind_compare import ns_prefix=%s tables=%d elapsed_ms=%d", pfx, len(imported_tables), elapsed_ms)
 
+    schema_meta = import_schema_meta(r=r, prefix=pfx, conn=conn, table_map=table_map, logger=logger)
+
     out: dict[str, Any] = {
         "table_counts": table_counts,
         "imported_tables": imported_tables,
         "elapsed_ms": elapsed_ms,
         "rounding": "2dp_half_up",
+        "schema_meta": schema_meta,
     }
     if reset_info is not None:
         out["reset"] = reset_info
+    if reset_schema_info is not None:
+        out["reset_schema_meta"] = reset_schema_info
     return out
 
 

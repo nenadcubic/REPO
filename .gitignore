@@ -8,9 +8,12 @@ examples/northwind_compare/assets/*.sqlite
 __pycache__/
 *.pyc
 
-# Local Playwright install (do not commit)
-UI_test/
-UI_tests/
+# Playwright UI_tests (commit tests + config, ignore artifacts)
+UI_tests/node_modules/
+UI_tests/test-results/
+UI_tests/playwright-report/
+UI_tests/.playwright/
+UI_tests/.cache/
 
 # React/Vite explorer app
 gui/frontend/explorer/node_modules/

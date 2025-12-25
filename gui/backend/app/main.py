@@ -14,13 +14,32 @@ from fastapi.responses import JSONResponse
 
 from .cli_adapter import er_cli_put, er_cli_query_with_count, er_cli_store_key
 from .errors import ApiError, err, ok
-from .models import ExamplesRunRequest, PutRequest, QueryRequest, StoreRequest
+from .models import (
+    AssocCheckRequest,
+    AssocHintRequest,
+    ExamplesRunRequest,
+    NorthwindCompareRequest,
+    NorthwindDataIngestRequest,
+    PutRequest,
+    QueryRequest,
+    StoreRequest,
+)
 from .redis_bits import decode_flags_bin, element_key_with_prefix
 from .settings import load_settings
 from .bitmaps import load_bitmaps_from_preset, save_bitmaps_to_preset
 from .namespaces import NamespaceEntry, load_namespaces_from_preset, namespaces_to_map
 from .namespace_discovery import DiscoveryLimits, discover_namespaces, write_namespaces_generated
 from .examples import get_example_readme, list_examples, run_example, run_reports
+from .schema_meta import decode_column_meta, decode_relation_meta
+from .assoc_wordnet import (
+    check_guess,
+    generate_board,
+    get_board,
+    get_or_build_explain,
+    hint_for,
+    seed_demo,
+ )
+from .northwind_data import compare_sql_vs_bitsets, data_info as northwind_data_info, ingest_data_rows
 
 
 BACKEND_VERSION = "0.1.0"
@@ -776,3 +795,299 @@ async def logs(tail: int = 200) -> dict[str, Any]:
 
     out_lines = lines[-tail:]
     return ok({"lines": out_lines, "returned": len(out_lines), "tail": tail})
+
+
+@app.get("/api/v1/assoc/board/random")
+async def assoc_board_random(seed: str | None = None, mode: str | None = None) -> dict[str, Any]:
+    r = redis_client()
+    if (mode or "").strip().lower() == "demo":
+        seed_demo(r=r)
+        board = get_board(r=r, board_id="demo_v1")
+        return ok(board)
+
+    try:
+        board = generate_board(r=r, seed=(seed or None))
+        return ok(board)
+    except ApiError as e:
+        # Out-of-the-box UX: if WordNet isn't ingested (or only demo-sized data exists),
+        # fall back to a demo board instead of surfacing an opaque 500 to the user.
+        if e.code in ("WORDNET_NOT_INGESTED", "NO_BOARD"):
+            try:
+                wn_count = int(r.scard("wn:all"))
+            except Exception:
+                wn_count = 0
+            if e.code == "WORDNET_NOT_INGESTED" or wn_count < 1000:
+                seed_demo(r=r)
+                board = get_board(r=r, board_id="demo_v1")
+                board_out = dict(board)
+                board_out["note"] = "Using demo board because full WordNet is not available; ingest WordNet to enable random boards."
+                return ok(board_out)
+        raise
+
+
+@app.get("/api/v1/assoc/status")
+async def assoc_status() -> dict[str, Any]:
+    r = redis_client()
+    try:
+        wn_all = int(r.scard("wn:all"))
+    except Exception:
+        wn_all = 0
+    try:
+        wn_nouns = int(r.scard("wn:idx:pos:n"))
+    except Exception:
+        wn_nouns = 0
+    try:
+        demo_present = bool(r.exists("assoc:board:demo_v1"))
+    except Exception:
+        demo_present = False
+
+    # Heuristic: demo seed is ~19 synsets; full WordNet is 100k+.
+    kind = "none"
+    if wn_all >= 1000:
+        kind = "full_or_partial"
+    elif wn_all > 0:
+        kind = "demo_or_small"
+
+    return ok(
+        {
+            "wordnet": {
+                "kind": kind,
+                "wn_all_count": wn_all,
+                "wn_noun_count": wn_nouns,
+                "demo_board_present": demo_present,
+            },
+            "ingest_commands": {
+                "host_python": "pip install -r tools/wn_ingest/requirements.txt && python tools/wn_ingest/wordnet_to_bitset.py --reset",
+                "docker_network": 'docker run --rm --network <compose_network> -v "$PWD":/work -w /work python:3.12-slim bash -lc "pip install -r tools/wn_ingest/requirements.txt && python tools/wn_ingest/wordnet_to_bitset.py --redis-host redis --redis-port 6379 --reset"',
+                "note": "Replace <compose_network> with your Docker network (e.g. gui_default).",
+            },
+        }
+    )
+
+
+@app.get("/api/v1/assoc/board/{id}")
+async def assoc_board(id: str) -> dict[str, Any]:
+    board_id = (id or "").strip()
+    if not board_id:
+        raise ApiError("INVALID_INPUT", "id is required", status_code=422)
+    r = redis_client()
+    return ok(get_board(r=r, board_id=board_id))
+
+
+@app.post("/api/v1/assoc/board/{id}/check")
+async def assoc_check(id: str, body: AssocCheckRequest) -> dict[str, Any]:
+    board_id = (id or "").strip()
+    if not board_id:
+        raise ApiError("INVALID_INPUT", "id is required", status_code=422)
+    r = redis_client()
+    board = get_board(r=r, board_id=board_id)
+    res = check_guess(r=r, board=board, cell=body.cell, guess=body.guess)
+    return ok({"id": board_id, "cell": body.cell, **res})
+
+
+@app.post("/api/v1/assoc/board/{id}/hint")
+async def assoc_hint(id: str, body: AssocHintRequest) -> dict[str, Any]:
+    board_id = (id or "").strip()
+    if not board_id:
+        raise ApiError("INVALID_INPUT", "id is required", status_code=422)
+    r = redis_client()
+    board = get_board(r=r, board_id=board_id)
+    res = hint_for(board=board, cell=body.cell, kind=body.kind)
+    return ok({"id": board_id, **res})
+
+
+@app.get("/api/v1/assoc/board/{id}/explain")
+async def assoc_explain(id: str) -> dict[str, Any]:
+    board_id = (id or "").strip()
+    if not board_id:
+        raise ApiError("INVALID_INPUT", "id is required", status_code=422)
+    r = redis_client()
+    board = get_board(r=r, board_id=board_id)
+    exp = get_or_build_explain(r=r, board=board)
+    return ok(exp)
+
+
+def _scan_keys(*, r: redis.Redis, match: str, max_keys: int) -> list[str]:
+    out: list[str] = []
+    for raw in r.scan_iter(match=match, count=1000):
+        k = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+        if not k:
+            continue
+        out.append(k)
+        if len(out) >= max_keys:
+            break
+    out.sort()
+    return out
+
+
+def _strip_element_key_prefix(*, key: str, prefix: str) -> str:
+    pfx = (prefix or "").strip(":")
+    want = f"{pfx}:element:"
+    if not key.startswith(want):
+        raise ApiError("INVALID_INPUT", "not an element key", status_code=422, details={"key": key})
+    return key[len(want) :]
+
+
+@app.post("/api/v1/explorer/northwind/data_ingest")
+async def northwind_data_ingest(body: NorthwindDataIngestRequest) -> dict[str, Any]:
+    ns_to_use = (body.ns or "").strip() or "or"
+    ns_id, ent, _ = _resolve_ns_entry(ns_to_use)
+    if ent.layout != "or_layout_v2":
+        raise ApiError(
+            "INVALID_INPUT",
+            "northwind data ingest requires OR layout",
+            status_code=422,
+            details={"ns": ns_id, "layout": ent.layout},
+        )
+    r = redis_client()
+    data = ingest_data_rows(
+        r=r,
+        prefix=ent.prefix,
+        tables=body.tables,
+        reset=(bool(body.reset) if body.reset is not None else False),
+        max_rows_per_table=int(body.max_rows_per_table or 0),
+    )
+    return ok({"ns": ns_id, "prefix": ent.prefix.strip(":"), **data})
+
+
+@app.get("/api/v1/explorer/northwind/data_info")
+async def northwind_data_info_route(ns: str | None = None) -> dict[str, Any]:
+    ns_id, ent, _ = _resolve_ns_entry((ns or "").strip() or "or")
+    if ent.layout != "or_layout_v2":
+        raise ApiError(
+            "INVALID_INPUT",
+            "northwind data info requires OR layout",
+            status_code=422,
+            details={"ns": ns_id, "layout": ent.layout},
+        )
+    r = redis_client()
+    info = northwind_data_info(r=r, prefix=ent.prefix)
+    return ok({"ns": ns_id, "prefix": ent.prefix.strip(":"), **info})
+
+
+@app.post("/api/v1/explorer/northwind/compare")
+async def northwind_compare(body: NorthwindCompareRequest) -> dict[str, Any]:
+    ns_to_use = (body.ns or "").strip() or "or"
+    ns_id, ent, _ = _resolve_ns_entry(ns_to_use)
+    if ent.layout != "or_layout_v2":
+        raise ApiError(
+            "INVALID_INPUT",
+            "northwind compare requires OR layout",
+            status_code=422,
+            details={"ns": ns_id, "layout": ent.layout},
+        )
+    r = redis_client()
+    data = compare_sql_vs_bitsets(
+        r=r,
+        prefix=ent.prefix,
+        table=body.table,
+        predicate_type=body.predicate.type,
+        conditions=[c.model_dump() for c in body.predicate.conditions],
+        sample=int(body.sample or 0),
+    )
+    return ok({"ns": ns_id, "prefix": ent.prefix.strip(":"), **data})
+
+
+@app.get("/api/v1/schema/tables")
+async def schema_tables(ns: str | None = None) -> dict[str, Any]:
+    ns_id, ent, _ = _resolve_ns_entry(ns)
+    pfx = ent.prefix.strip(":")
+    r = redis_client()
+    keys = _scan_keys(r=r, match=f"{pfx}:element:tbl:*", max_keys=5000)
+    tables: list[dict[str, Any]] = []
+    for k in keys:
+        name = _strip_element_key_prefix(key=k, prefix=pfx)
+        if not name.startswith("tbl:"):
+            continue
+        table = name[len("tbl:") :]
+        if not table:
+            continue
+        tables.append({"table": table, "key": k})
+    return ok({"ns": ns_id, "prefix": pfx, "tables": tables})
+
+
+@app.get("/api/v1/schema/tables/{table}")
+async def schema_table(table: str, ns: str | None = None) -> dict[str, Any]:
+    table = (table or "").strip()
+    if not table or len(table) > 100:
+        raise ApiError("INVALID_INPUT", "table is required", status_code=422)
+
+    ns_id, ent, _ = _resolve_ns_entry(ns)
+    pfx = ent.prefix.strip(":")
+    r = redis_client()
+
+    col_keys = _scan_keys(r=r, match=f"{pfx}:element:col:{table}:*", max_keys=50_000)
+    rel_from_keys = _scan_keys(r=r, match=f"{pfx}:element:rel:{table}:*", max_keys=50_000)
+    rel_to_keys = _scan_keys(r=r, match=f"{pfx}:element:rel:*:{table}:*", max_keys=50_000)
+    rel_keys = sorted(set(rel_from_keys) | set(rel_to_keys))
+
+    pipe = r.pipeline(transaction=False)
+    for k in col_keys:
+        pipe.hget(k, "flags_bin")
+    for k in rel_keys:
+        pipe.hget(k, "flags_bin")
+    raw = pipe.execute()
+
+    cols: list[dict[str, Any]] = []
+    for i, k in enumerate(col_keys):
+        flags_bin = raw[i] if i < len(raw) else None
+        if isinstance(flags_bin, str):
+            flags_bin = flags_bin.encode("utf-8")
+        if not isinstance(flags_bin, (bytes, bytearray)) or len(flags_bin) != 512:
+            continue
+        bits = set(decode_flags_bin(bytes(flags_bin)))
+
+        name = _strip_element_key_prefix(key=k, prefix=pfx)
+        if not name.startswith(f"col:{table}:"):
+            continue
+        col_name = name[len(f"col:{table}:") :]
+        meta = decode_column_meta(bits)
+        cols.append(
+            {
+                "name": col_name,
+                "type_family": meta.type_family,
+                "not_null": meta.not_null,
+                "has_default": meta.has_default,
+                "is_pk": meta.is_pk,
+                "is_fk": meta.is_fk,
+                "has_index": meta.has_index,
+                "length_bucket": meta.length_bucket,
+                "key": k,
+            }
+        )
+    cols.sort(key=lambda it: it.get("name") or "")
+
+    rels: list[dict[str, Any]] = []
+    base = len(col_keys)
+    for j, k in enumerate(rel_keys):
+        flags_bin = raw[base + j] if base + j < len(raw) else None
+        if isinstance(flags_bin, str):
+            flags_bin = flags_bin.encode("utf-8")
+        if not isinstance(flags_bin, (bytes, bytearray)) or len(flags_bin) != 512:
+            continue
+        bits = set(decode_flags_bin(bytes(flags_bin)))
+
+        name = _strip_element_key_prefix(key=k, prefix=pfx)
+        parts = name.split(":", 3)
+        if len(parts) != 4 or parts[0] != "rel":
+            continue
+        from_table, to_table, fk = parts[1], parts[2], parts[3]
+        direction = "from" if from_table == table else "to" if to_table == table else "other"
+        meta = decode_relation_meta(bits)
+        rels.append(
+            {
+                "from_table": from_table,
+                "to_table": to_table,
+                "fk": fk,
+                "direction": direction,
+                "cardinality": meta.cardinality,
+                "child_required": meta.child_required,
+                "on_delete": meta.on_delete,
+                "on_update": meta.on_update,
+                "key": k,
+            }
+        )
+
+    rels.sort(key=lambda it: (it.get("direction") or "", it.get("from_table") or "", it.get("to_table") or "", it.get("fk") or ""))
+
+    return ok({"ns": ns_id, "prefix": pfx, "table": table, "columns": cols, "relations": rels})
